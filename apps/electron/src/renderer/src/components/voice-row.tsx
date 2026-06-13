@@ -93,12 +93,15 @@ export function VoiceRow({
   onSelectLocal: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx",
+    engine?: "whisper" | "mlx" | "parakeet",
   ) => void;
-  onDownload: (defId: string, engine?: "whisper" | "mlx") => void;
-  onRetryLocal?: (defId: string, engine: "whisper" | "mlx") => void;
-  onCancel?: (defId: string, engine?: "whisper" | "mlx") => void;
-  onDelete?: (defId: string, engine?: "whisper" | "mlx") => void;
+  onDownload: (defId: string, engine?: "whisper" | "mlx" | "parakeet") => void;
+  onRetryLocal?: (
+    defId: string,
+    engine: "whisper" | "mlx" | "parakeet",
+  ) => void;
+  onCancel?: (defId: string, engine?: "whisper" | "mlx" | "parakeet") => void;
+  onDelete?: (defId: string, engine?: "whisper" | "mlx" | "parakeet") => void;
 }): React.JSX.Element {
   const local = item.kind === "local";
   const status = item.status ?? "not_downloaded";

@@ -69,6 +69,17 @@ export interface MlxAsrStatus {
   setupHint: string | null;
 }
 
+export interface ParakeetStatus {
+  binaryAvailable: boolean;
+  binaryDownloading: boolean;
+  serverBinaryAvailable: boolean;
+  serverRunning: boolean;
+  serverFailed: boolean;
+  modelsDir: string;
+  models: WhisperModelDownloadState[];
+  modelDefinitions: WhisperModelDef[];
+}
+
 export const CLOUD_VOICE_PROVIDERS = [
   "openai",
   "groq",
@@ -81,6 +92,7 @@ export const VOICE_PROVIDERS = [
   ...CLOUD_VOICE_PROVIDERS,
   "local-whisper",
   "local-mlx",
+  "local-parakeet",
 ];
 
 export const LLM_PROVIDERS = [
@@ -105,6 +117,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   "local-llm": "Local LLM",
   "local-whisper": "Local Whisper",
   "local-mlx": "Local MLX",
+  "local-parakeet": "Local Parakeet",
 };
 
 /** Where to create an API key, linked from the key-entry views. */
@@ -140,8 +153,8 @@ export function formatSpeed(bps: number): string {
 export interface VoiceItem {
   key: string;
   kind: "local" | "cloud";
-  /** Which on-device engine powers this row (whisper.cpp vs MLX). */
-  localEngine?: "whisper" | "mlx";
+  /** Which on-device engine powers this row (whisper.cpp vs MLX vs parakeet.cpp). */
+  localEngine?: "whisper" | "mlx" | "parakeet";
   name: string;
   provider: string;
   modelId: string;
@@ -228,7 +241,21 @@ export const LOCAL_VOICE_NOTES: Record<string, string> = {
   large: "Most accurate on-device option",
   "qwen3-0.6b-8bit": "Fast, accurate, runs privately on your Mac",
   "qwen3-1.7b-8bit": "Highest on-device accuracy",
-  "parakeet-tdt-0.6b-v3": "Very fast · 25 languages · no custom vocabulary",
+  "tdt_ctc-110m-f16": "Smallest model · fast on any CPU · English",
+  "tdt_ctc-110m-q4_k": "Smallest model quantized · minimal RAM · English",
+  "realtime_eou_120m-v1-f16":
+    "Realtime streaming with end-of-utterance detection",
+  "ctc-0.6b-f16": "High accuracy · English",
+  "ctc-0.6b-q5_k": "High accuracy · smaller download · English",
+  "rnnt-0.6b-f16": "RNN-T decoder · English",
+  "tdt-0.6b-v2-f16": "TDT decoder · English",
+  "tdt-0.6b-v3-f16": "TDT v3 · multilingual (25 languages)",
+  "tdt-0.6b-v3-q5_k": "TDT v3 quantized · multilingual (25 languages)",
+  "nemotron-3.5-asr-streaming-0.6b-f16": "Multilingual streaming (40+ locales)",
+  "ctc-1.1b-f16": "Highest accuracy · English · more RAM",
+  "rnnt-1.1b-f16": "RNN-T 1.1B · English · more RAM",
+  "tdt-1.1b-f16": "TDT 1.1B · English · more RAM",
+  "tdt_ctc-1.1b-f16": "Hybrid TDT+CTC · English · more RAM",
 };
 
 /** The single recommended model per platform (one badge, everywhere). */
@@ -241,11 +268,13 @@ export function buildVoiceItems(
   available: AvailableModel[],
   whisperStatus: WhisperStatus | null,
   mlxStatus: MlxAsrStatus | null,
+  parakeetStatus: ParakeetStatus | null,
   ctx: {
     selectedModelId?: string;
     selectedProvider?: string;
     selectedWhisperModelId?: string;
     selectedMlxModelId?: string;
+    selectedParakeetModelId?: string;
     keyProviders: Set<string>;
   },
 ): VoiceItem[] {
@@ -325,12 +354,41 @@ export function buildVoiceItems(
           };
         });
 
+  const parakeetLocal: VoiceItem[] = (
+    parakeetStatus?.modelDefinitions ?? []
+  ).map((def) => {
+    const state = parakeetStatus?.models.find((m) => m.model === def.id);
+    const modelId = `local-parakeet/${def.id}`;
+    return {
+      key: modelId,
+      kind: "local",
+      localEngine: "parakeet",
+      name: def.displayName,
+      provider: "On-device · Parakeet",
+      modelId,
+      speed: SPEED_RANK[def.speed] ?? 5,
+      quality: QUALITY_RANK[def.quality] ?? 5,
+      quantized: def.quantized,
+      note: LOCAL_VOICE_NOTES[def.id],
+      defId: def.id,
+      sizeBytes: def.sizeBytes,
+      ram: def.ramRequired,
+      state,
+      status: state?.status ?? "not_downloaded",
+      selected:
+        ctx.selectedParakeetModelId === def.id ||
+        (ctx.selectedProvider === "local-parakeet" &&
+          ctx.selectedModelId === modelId),
+    };
+  });
+
   const seen = new Set<string>();
   const cloud: VoiceItem[] = [];
   for (const m of available) {
     if (m.type !== "voice") continue;
     if (m.provider_id === "local-whisper") continue;
     if (m.provider_id === "local-mlx") continue;
+    if (m.provider_id === "local-parakeet") continue;
     if (!VOICE_PROVIDERS.includes(m.provider_id)) continue;
     if (seen.has(m.model_id)) continue;
     seen.add(m.model_id);
@@ -360,5 +418,5 @@ export function buildVoiceItems(
     return am - bm;
   });
 
-  return [...whisperLocal, ...mlxLocal, ...cloud];
+  return [...whisperLocal, ...mlxLocal, ...parakeetLocal, ...cloud];
 }

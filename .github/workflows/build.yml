@@ -135,6 +135,10 @@ jobs:
         working-directory: apps/electron
         run: node scripts/download-whisper-cpp.mjs --resources
 
+      - name: Build parakeet.cpp binaries
+        working-directory: apps/electron
+        run: node scripts/download-parakeet-cpp.mjs --resources
+
       - name: Build electron (Linux)
         working-directory: apps/electron
         run: pnpm run build:linux
@@ -181,6 +185,10 @@ jobs:
       - name: Build whisper.cpp binaries
         working-directory: apps/electron
         run: node scripts/download-whisper-cpp.mjs --resources
+
+      - name: Build parakeet.cpp binaries
+        working-directory: apps/electron
+        run: node scripts/download-parakeet-cpp.mjs --resources
 
       - name: Build electron (macOS)
         working-directory: apps/electron
@@ -229,6 +237,10 @@ jobs:
       - name: Download whisper.cpp binaries
         working-directory: apps/electron
         run: node scripts/download-whisper-cpp.mjs --resources
+
+      - name: Build parakeet.cpp binaries
+        working-directory: apps/electron
+        run: node scripts/download-parakeet-cpp.mjs --resources
 
       - name: Build electron (Windows)
         working-directory: apps/electron

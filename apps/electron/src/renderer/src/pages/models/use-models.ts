@@ -2,6 +2,7 @@ import { getClient } from "@renderer/lib/api";
 import type {
   AvailableModel,
   MlxAsrStatus,
+  ParakeetStatus,
   VoiceItem,
   WhisperStatus,
 } from "@renderer/lib/models";
@@ -38,6 +39,7 @@ export interface UseModels {
   apiKeys: ApiKeyEntry[];
   whisperStatus: WhisperStatus | null;
   mlxStatus: MlxAsrStatus | null;
+  parakeetStatus: ParakeetStatus | null;
   llmCleanup: boolean;
   mlxKeepAliveMinutes: number;
 
@@ -62,12 +64,18 @@ export interface UseModels {
   selectLocalVoice: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx",
+    engine?: "whisper" | "mlx" | "parakeet",
   ) => Promise<void>;
   retryLocalMlx: (defId: string) => Promise<void>;
-  downloadLocal: (defId: string, engine?: "whisper" | "mlx") => void;
-  cancelLocal: (defId: string, engine?: "whisper" | "mlx") => void;
-  deleteLocal: (defId: string, engine?: "whisper" | "mlx") => Promise<void>;
+  downloadLocal: (
+    defId: string,
+    engine?: "whisper" | "mlx" | "parakeet",
+  ) => void;
+  cancelLocal: (defId: string, engine?: "whisper" | "mlx" | "parakeet") => void;
+  deleteLocal: (
+    defId: string,
+    engine?: "whisper" | "mlx" | "parakeet",
+  ) => Promise<void>;
   selectLocalLlmModel: (modelName: string) => Promise<void>;
   setCleanup: (next: boolean) => void;
   saveMlxKeepAliveMinutes: (minutes: number) => void;
@@ -85,6 +93,9 @@ export function useModels(): UseModels {
     null,
   );
   const [mlxStatus, setMlxStatus] = useState<MlxAsrStatus | null>(null);
+  const [parakeetStatus, setParakeetStatus] = useState<ParakeetStatus | null>(
+    null,
+  );
   const [mlxKeepAliveMinutes, setMlxKeepAliveMinutes] = useState(
     DEFAULT_MLX_KEEP_ALIVE_MINUTES,
   );
@@ -191,11 +202,26 @@ export function useModels(): UseModels {
     return null;
   }, []);
 
+  const loadParakeetStatus = useCallback(async () => {
+    try {
+      const res = await getClient().api.parakeet.status.$get();
+      if (res.ok) {
+        const data: ParakeetStatus = await res.json();
+        setParakeetStatus(data);
+        return data;
+      }
+    } catch (err) {
+      console.error("Failed to load parakeet status:", err);
+    }
+    return null;
+  }, []);
+
   useEffect(() => {
     loadData();
     loadWhisperStatus();
+    loadParakeetStatus();
     if (IS_MAC) loadMlxStatus();
-  }, [loadData, loadWhisperStatus, loadMlxStatus]);
+  }, [loadData, loadWhisperStatus, loadParakeetStatus, loadMlxStatus]);
 
   // Poll whisper status while a download is active.
   useEffect(() => {
@@ -242,6 +268,30 @@ export function useModels(): UseModels {
     return () => clearInterval(interval);
   }, [mlxStatus, loadMlxStatus, loadData]);
 
+  // Poll parakeet status while a download is active.
+  useEffect(() => {
+    const active =
+      parakeetStatus?.binaryDownloading ||
+      parakeetStatus?.models?.some(
+        (m) => m.status === "downloading" || m.status === "verifying",
+      );
+    if (!active) return;
+    const interval = setInterval(() => {
+      loadParakeetStatus().then((data) => {
+        if (
+          data &&
+          !data.binaryDownloading &&
+          !data.models?.some(
+            (m) => m.status === "downloading" || m.status === "verifying",
+          )
+        ) {
+          loadData();
+        }
+      });
+    }, 500);
+    return () => clearInterval(interval);
+  }, [parakeetStatus, loadParakeetStatus, loadData]);
+
   // -------------------------------------------------------------------------
   // Derived state
   // -------------------------------------------------------------------------
@@ -258,6 +308,7 @@ export function useModels(): UseModels {
     available,
     whisperStatus,
     mlxStatus,
+    parakeetStatus,
     {
       defaultVoice,
       keyProviders,
@@ -313,8 +364,17 @@ export function useModels(): UseModels {
   );
 
   const selectLocalVoice = useCallback(
-    async (defId: string, name: string, engine?: "whisper" | "mlx") => {
-      const provider = engine === "mlx" ? "local-mlx" : "local-whisper";
+    async (
+      defId: string,
+      name: string,
+      engine?: "whisper" | "mlx" | "parakeet",
+    ) => {
+      const provider =
+        engine === "mlx"
+          ? "local-mlx"
+          : engine === "parakeet"
+            ? "local-parakeet"
+            : "local-whisper";
       await getClient().api.models.configured.$post({
         json: {
           provider,
@@ -328,6 +388,10 @@ export function useModels(): UseModels {
         getClient()
           .api["mlx-asr"].server.start.$post({ json: { modelId: defId } })
           .catch(() => {});
+      } else if (engine === "parakeet") {
+        getClient()
+          .api.parakeet.server.start.$post({ json: { modelId: defId } })
+          .catch(() => {});
       } else {
         getClient()
           .api.whisper.server.start.$post({ json: { modelId: defId } })
@@ -339,13 +403,19 @@ export function useModels(): UseModels {
   );
 
   const downloadLocal = useCallback(
-    (defId: string, engine?: "whisper" | "mlx") => {
+    (defId: string, engine?: "whisper" | "mlx" | "parakeet") => {
       if (engine === "mlx") {
         void getClient()
           .api["mlx-asr"].models[":model"].download.$post({
             param: { model: defId },
           })
           .then(() => loadMlxStatus());
+      } else if (engine === "parakeet") {
+        void getClient()
+          .api.parakeet.models[":model"].download.$post({
+            param: { model: defId },
+          })
+          .then(() => loadParakeetStatus());
       } else {
         void getClient()
           .api.whisper.models[":model"].download.$post({
@@ -354,17 +424,23 @@ export function useModels(): UseModels {
           .then(() => loadWhisperStatus());
       }
     },
-    [loadMlxStatus, loadWhisperStatus],
+    [loadMlxStatus, loadWhisperStatus, loadParakeetStatus],
   );
 
   const cancelLocal = useCallback(
-    (defId: string, engine?: "whisper" | "mlx") => {
+    (defId: string, engine?: "whisper" | "mlx" | "parakeet") => {
       if (engine === "mlx") {
         void getClient()
           .api["mlx-asr"].models[":model"].cancel.$post({
             param: { model: defId },
           })
           .then(() => loadMlxStatus());
+      } else if (engine === "parakeet") {
+        void getClient()
+          .api.parakeet.models[":model"].cancel.$post({
+            param: { model: defId },
+          })
+          .then(() => loadParakeetStatus());
       } else {
         void getClient()
           .api.whisper.models[":model"].cancel.$post({
@@ -373,16 +449,21 @@ export function useModels(): UseModels {
           .then(() => loadWhisperStatus());
       }
     },
-    [loadMlxStatus, loadWhisperStatus],
+    [loadMlxStatus, loadWhisperStatus, loadParakeetStatus],
   );
 
   const deleteLocal = useCallback(
-    async (defId: string, engine?: "whisper" | "mlx") => {
+    async (defId: string, engine?: "whisper" | "mlx" | "parakeet") => {
       if (engine === "mlx") {
         await getClient().api["mlx-asr"].models[":model"].$delete({
           param: { model: defId },
         });
         await loadMlxStatus();
+      } else if (engine === "parakeet") {
+        await getClient().api.parakeet.models[":model"].$delete({
+          param: { model: defId },
+        });
+        await loadParakeetStatus();
       } else {
         await getClient().api.whisper.models[":model"].$delete({
           param: { model: defId },
@@ -391,7 +472,7 @@ export function useModels(): UseModels {
       }
       await loadData();
     },
-    [loadMlxStatus, loadWhisperStatus, loadData],
+    [loadMlxStatus, loadWhisperStatus, loadParakeetStatus, loadData],
   );
 
   const retryLocalMlx = useCallback(
@@ -539,6 +620,7 @@ export function useModels(): UseModels {
     apiKeys,
     whisperStatus,
     mlxStatus,
+    parakeetStatus,
     llmCleanup,
     mlxKeepAliveMinutes,
     keyProviders,

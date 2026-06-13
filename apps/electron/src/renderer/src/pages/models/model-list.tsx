@@ -65,9 +65,12 @@ interface VoiceHandlers {
   onPickLocalVoice: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx",
+    engine?: "whisper" | "mlx" | "parakeet",
   ) => void;
-  onRequestDeleteLocal: (defId: string, engine?: "whisper" | "mlx") => void;
+  onRequestDeleteLocal: (
+    defId: string,
+    engine?: "whisper" | "mlx" | "parakeet",
+  ) => void;
 }
 
 function buildVoiceRows(m: UseModels, h: VoiceHandlers): Row[] {
@@ -106,7 +109,7 @@ function buildVoiceRows(m: UseModels, h: VoiceHandlers): Row[] {
           ? () =>
               it.localEngine === "mlx"
                 ? void m.retryLocalMlx(defId)
-                : m.downloadLocal(defId, "whisper")
+                : m.downloadLocal(defId, it.localEngine ?? "whisper")
           : undefined,
       };
     }
@@ -196,9 +199,12 @@ export function ModelList({
   onPickLocalVoice: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx",
+    engine?: "whisper" | "mlx" | "parakeet",
   ) => void;
-  onRequestDeleteLocal: (defId: string, engine?: "whisper" | "mlx") => void;
+  onRequestDeleteLocal: (
+    defId: string,
+    engine?: "whisper" | "mlx" | "parakeet",
+  ) => void;
 }): React.JSX.Element {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -364,7 +370,7 @@ function VoiceTiers({
   onPickLocalVoice: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx",
+    engine?: "whisper" | "mlx" | "parakeet",
   ) => void;
   onShowAll: () => void;
 }): React.JSX.Element {

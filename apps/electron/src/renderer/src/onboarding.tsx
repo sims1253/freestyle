@@ -359,7 +359,7 @@ export default function OnboardingPage(): React.JSX.Element {
     (
       defId: string,
       name: string,
-      engine?: "whisper" | "mlx",
+      engine?: "whisper" | "mlx" | "parakeet",
       source: "auto" | "selector" = "selector",
     ) => {
       if (engine === "mlx") {
@@ -415,7 +415,7 @@ export default function OnboardingPage(): React.JSX.Element {
   );
 
   const downloadLocalModel = useCallback(
-    (modelId: string, engine?: "whisper" | "mlx") => {
+    (modelId: string, engine?: "whisper" | "mlx" | "parakeet") => {
       if (engine === "mlx") {
         void downloadMlxModel(modelId);
         return;
@@ -425,19 +425,25 @@ export default function OnboardingPage(): React.JSX.Element {
     [downloadMlxModel, downloadWhisperModel],
   );
 
-  const allVoiceItems = buildVoiceItems(available, whisperStatus, mlxStatus, {
-    selectedModelId: selectedModel?.model_id,
-    selectedProvider:
-      selectedModel?.provider_id ??
-      (selectedWhisperDefId
-        ? "local-whisper"
-        : selectedMlxDefId
-          ? "local-mlx"
-          : undefined),
-    selectedWhisperModelId: selectedWhisperDefId ?? undefined,
-    selectedMlxModelId: selectedMlxDefId ?? undefined,
-    keyProviders: apiKeys,
-  });
+  const allVoiceItems = buildVoiceItems(
+    available,
+    whisperStatus,
+    mlxStatus,
+    null,
+    {
+      selectedModelId: selectedModel?.model_id,
+      selectedProvider:
+        selectedModel?.provider_id ??
+        (selectedWhisperDefId
+          ? "local-whisper"
+          : selectedMlxDefId
+            ? "local-mlx"
+            : undefined),
+      selectedWhisperModelId: selectedWhisperDefId ?? undefined,
+      selectedMlxModelId: selectedMlxDefId ?? undefined,
+      keyProviders: apiKeys,
+    },
+  );
 
   // Resolve the opinionated recommendation: Qwen3 on-device when MLX can run,
   // otherwise whisper.cpp Base (universal).
@@ -1035,10 +1041,10 @@ function ModelSelectorOverlay({
   onSelectLocal: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx",
+    engine?: "whisper" | "mlx" | "parakeet",
   ) => void;
-  onDownload: (defId: string, engine?: "whisper" | "mlx") => void;
-  onRetryLocal: (defId: string, engine: "whisper" | "mlx") => void;
+  onDownload: (defId: string, engine?: "whisper" | "mlx" | "parakeet") => void;
+  onRetryLocal: (defId: string, engine: "whisper" | "mlx" | "parakeet") => void;
   onClose: () => void;
   onSaveKey: () => Promise<boolean>;
 }): React.JSX.Element {
@@ -1084,12 +1090,18 @@ function ModelSelectorOverlay({
   const handleSelectLocal = (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx",
+    engine?: "whisper" | "mlx" | "parakeet",
   ) => {
+    const provider =
+      engine === "mlx"
+        ? "local-mlx"
+        : engine === "parakeet"
+          ? "local-parakeet"
+          : "local-whisper";
     capture("onboarding_model_selected", {
-      model_id: `${engine === "mlx" ? "local-mlx" : "local-whisper"}/${defId}`,
+      model_id: `${provider}/${defId}`,
       kind: "local",
-      provider: engine === "mlx" ? "local-mlx" : "local-whisper",
+      provider,
       from: "selector",
     });
     onSelectLocal(defId, name, engine);

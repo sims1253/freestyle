@@ -9,6 +9,11 @@ import {
 import { getMlxModelStatus } from "../lib/mlx-asr/models.js";
 import { reconcileUnsupportedMlxVoiceDefault } from "../lib/mlx-asr/reconcile.js";
 import { canRunMlxAsr } from "../lib/mlx-asr/server.js";
+import {
+  PARAKEET_MODELS,
+  PARAKEET_PROVIDER_ID,
+} from "../lib/parakeet/constants.js";
+import { getModelStatus as getParakeetModelStatus } from "../lib/parakeet/models.js";
 import { capture } from "../lib/posthog.js";
 import { stripProviderPrefix } from "../lib/streaming/types.js";
 import { isServerBinaryAvailable } from "../lib/whisper/binary.js";
@@ -106,6 +111,19 @@ const LOCAL_MLX_VOICE_MODELS: AvailableModel[] = [
   cost_input: 0,
   cost_output: 0,
 }));
+
+const LOCAL_PARAKEET_VOICE_MODELS: AvailableModel[] = PARAKEET_MODELS.map(
+  (m) => ({
+    provider_id: PARAKEET_PROVIDER_ID,
+    provider_name: "Local Parakeet",
+    model_id: `${PARAKEET_PROVIDER_ID}/${m.id}`,
+    model_name: m.displayName,
+    family: "parakeet",
+    type: "voice" as const,
+    cost_input: 0,
+    cost_output: 0,
+  }),
+);
 
 // Curated cloud voice catalog: one flagship per provider. The models.dev
 // registry is deliberately NOT merged for voice — untested model noise.
@@ -364,6 +382,15 @@ const models = new Hono()
           if (status?.status === "ready") {
             available.push({ ...mlxModel, curated: true });
           }
+        }
+      }
+
+      // Add local parakeet voice models (only those that are downloaded)
+      for (const parakeetModel of LOCAL_PARAKEET_VOICE_MODELS) {
+        const modelId = parakeetModel.model_id.split("/")[1];
+        const status = getParakeetModelStatus(modelId);
+        if (status?.status === "ready") {
+          available.push({ ...parakeetModel, curated: true });
         }
       }
 

@@ -18,6 +18,7 @@ import history from "./routes/history.js";
 import mcp from "./routes/mcp.js";
 import mlxAsr, { autoStartMlxAsrServer } from "./routes/mlx-asr.js";
 import models from "./routes/models.js";
+import parakeet, { autoStartParakeetServer } from "./routes/parakeet.js";
 import postProcessRoute from "./routes/post-process-route.js";
 import settings from "./routes/settings.js";
 import stream from "./routes/stream.js";
@@ -77,16 +78,19 @@ const app = new Hono()
   .route("/api/formats", formats)
   .route("/api/post-process", postProcessRoute)
   .route("/api/whisper", whisper)
+  .route("/api/parakeet", parakeet)
   .route("/api/mlx-asr", mlxAsr)
   .route("/mcp", mcp)
   .route("/stream", stream);
 
 export { closeDb } from "./lib/db.js";
 export { stopMlxServer } from "./lib/mlx-asr/server.js";
+export { stopServer as stopParakeetServer } from "./lib/parakeet/server.js";
 export { stopServer as stopWhisperServer } from "./lib/whisper/server.js";
 export {
   activateManagedMlxRuntimeForAppVersion,
   autoStartMlxAsrServer,
+  autoStartParakeetServer,
   autoStartWhisperServer,
   prefetchManagedMlxRuntimeForAppRelease,
   reconcileUnsupportedMlxVoiceDefault,

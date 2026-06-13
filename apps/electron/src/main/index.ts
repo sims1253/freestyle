@@ -46,11 +46,13 @@ import { pathToFileURL } from "node:url";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import server, {
   activateManagedMlxRuntimeForAppVersion,
+  autoStartParakeetServer,
   autoStartWhisperServer,
   closeDb,
   prefetchManagedMlxRuntimeForAppRelease,
   reconcileUnsupportedMlxVoiceDefault,
   stopMlxServer,
+  stopParakeetServer,
   stopWhisperServer,
 } from "@freestyle/server";
 import { createAppLogger } from "@freestyle/utils";
@@ -752,6 +754,7 @@ async function factoryReset(): Promise<void> {
 
   try {
     await stopWhisperServer().catch(() => {});
+    await stopParakeetServer().catch(() => {});
     await stopMlxServer().catch(() => {});
 
     if (keyListener) {
@@ -1281,6 +1284,7 @@ app.whenReady().then(async () => {
   // Run non-critical server startup tasks now that the DB path is set
   reconcileUnsupportedMlxVoiceDefault();
   autoStartWhisperServer();
+  autoStartParakeetServer();
 
   // Start the Hono HTTP server with WebSocket support (or reuse an existing one)
   function startServer(port: number): void {
@@ -1966,6 +1970,7 @@ let updateDownloadState: "idle" | "downloading" | "downloaded" = "idle";
 
 function cleanupBeforeQuit(): void {
   stopWhisperServer().catch(() => {});
+  stopParakeetServer().catch(() => {});
   stopMlxServer().catch(() => {});
   if (keyListener) {
     keyListener.stop();

@@ -82,9 +82,12 @@ export function ModelModal({
   onPickLocalVoice: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx",
+    engine?: "whisper" | "mlx" | "parakeet",
   ) => void;
-  onRequestDeleteLocal: (defId: string, engine?: "whisper" | "mlx") => void;
+  onRequestDeleteLocal: (
+    defId: string,
+    engine?: "whisper" | "mlx" | "parakeet",
+  ) => void;
   onBack: () => void;
   onSaveKey: (key: string) => void;
 }): React.JSX.Element {

@@ -23,6 +23,10 @@ win:
       to: "whisper/win32-x64"
       filter:
         - "**/*"
+    - from: "resources/parakeet/win32-x64"
+      to: "parakeet/win32-x64"
+      filter:
+        - "**/*"
 nsis:
   artifactName: ${productName}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -44,6 +48,10 @@ mac:
       to: "whisper/darwin-${arch}"
       filter:
         - "**/*"
+    - from: "resources/parakeet/darwin-${arch}"
+      to: "parakeet/darwin-${arch}"
+      filter:
+        - "**/*"
     - from: "../../scripts/mlx_asr_server.py"
       to: "mlx-asr/mlx_asr_server.py"
 dmg:
@@ -62,6 +70,10 @@ linux:
   extraResources:
     - from: "resources/whisper/linux-x64"
       to: "whisper/linux-x64"
+      filter:
+        - "**/*"
+    - from: "resources/parakeet/linux-x64"
+      to: "parakeet/linux-x64"
       filter:
         - "**/*"
 appImage:
