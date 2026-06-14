@@ -7,10 +7,12 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -18,6 +20,13 @@ import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { createAppLogger } from "@freestyle/utils";
 import { progressFetch } from "../hf/progress.js";
+import {
+  getReleaseAsset,
+  type ParakeetBackend,
+  type ReleaseAsset,
+  type ResolvedBackend,
+  resolveBackend,
+} from "./backends.js";
 import {
   getBinDir,
   getModelPath,
@@ -269,124 +278,119 @@ export function isBinaryDownloading(): boolean {
   return binaryDownloadPromise !== null;
 }
 
-export async function ensureBinariesDownloaded(): Promise<void> {
+/** Marker file written next to the binary recording which backend it ships. */
+const BACKEND_MARKER = ".installed-backend";
+
+/**
+ * Read the backend recorded for the currently installed binary, or `null` if
+ * no marker exists (e.g. installed before backend tracking, or not installed).
+ */
+export function getInstalledBackend(): ResolvedBackend | null {
+  const markerPath = join(getBinDir(), BACKEND_MARKER);
+  try {
+    const raw = readFileSync(markerPath, "utf8").trim() as ResolvedBackend;
+    if (
+      raw === "cpu" ||
+      raw === "vulkan" ||
+      raw === "cuda" ||
+      raw === "metal"
+    ) {
+      return raw;
+    }
+  } catch {}
+  return null;
+}
+
+function writeBackendMarker(binDir: string, backend: ResolvedBackend): void {
+  try {
+    writeFileSync(join(binDir, BACKEND_MARKER), backend, "utf8");
+  } catch {}
+}
+
+/**
+ * Ensure the binary for the requested backend is installed.
+ *
+ * `cpu` never triggers a download: CPU is compiled into every build, so when
+ * the user picks CPU we simply set `PARAKEET_DEVICE=cpu` at invocation time
+ * against whatever binary is present. If no binary is present at all, we fall
+ * back to the platform default.
+ *
+ * For GPU backends, we skip the download when the marker already matches, and
+ * re-download only when switching (e.g. vulkan → cuda).
+ */
+export async function ensureBinariesDownloaded(
+  preference: ParakeetBackend = "auto",
+): Promise<void> {
   const { isServerBinaryAvailable, resetBinaryCache } = await import(
     "./binary.js"
   );
-  if (isServerBinaryAvailable()) return;
+
+  const resolved = resolveBackend(preference);
+  const installed = getInstalledBackend();
+
+  // Already have a binary for the exact requested backend — done.
+  if (isServerBinaryAvailable() && installed === resolved) return;
+
+  // CPU only requires a binary to exist; it works against any backend build.
+  if (resolved === "cpu" && isServerBinaryAvailable()) return;
 
   if (binaryDownloadPromise) return binaryDownloadPromise;
-  binaryDownloadPromise = downloadPrebuiltBinaries().finally(() => {
+  binaryDownloadPromise = downloadPrebuiltBinaries(resolved).finally(() => {
     binaryDownloadPromise = null;
     resetBinaryCache();
   });
   return binaryDownloadPromise;
 }
 
-const PARAKEET_RELEASE_TAG = "v0.2.0";
-const PARAKEET_RELEASE_BASE = `https://github.com/mudler/parakeet.cpp/releases/download/${PARAKEET_RELEASE_TAG}`;
-
-interface ReleaseAsset {
-  url: string;
-  archiveName: string;
-}
-
-function getReleaseAssetCandidates(): ReleaseAsset[] {
-  const platform = process.platform;
-  const arch = process.arch;
-  const candidates: ReleaseAsset[] = [];
-
-  if (platform === "win32" && arch === "x64") {
-    // Try CUDA first (includes cudart), then Vulkan, then plain CPU
-    candidates.push(
-      {
-        url: `${PARAKEET_RELEASE_BASE}/parakeet-${PARAKEET_RELEASE_TAG}-bin-win-cuda-x64.zip`,
-        archiveName: `parakeet-win-cuda-x64.zip`,
-      },
-      {
-        url: `${PARAKEET_RELEASE_BASE}/parakeet-${PARAKEET_RELEASE_TAG}-bin-win-vulkan-x64.zip`,
-        archiveName: `parakeet-win-vulkan-x64.zip`,
-      },
-      {
-        url: `${PARAKEET_RELEASE_BASE}/parakeet-${PARAKEET_RELEASE_TAG}-bin-win-cpu-x64.zip`,
-        archiveName: `parakeet-win-cpu-x64.zip`,
-      },
-    );
-  } else if (platform === "darwin" && arch === "arm64") {
-    candidates.push({
-      url: `${PARAKEET_RELEASE_BASE}/parakeet-${PARAKEET_RELEASE_TAG}-bin-macos-metal-arm64.tar.gz`,
-      archiveName: `parakeet-macos-metal-arm64.tar.gz`,
-    });
-  } else if (platform === "darwin" && arch === "x64") {
-    candidates.push({
-      url: `${PARAKEET_RELEASE_BASE}/parakeet-${PARAKEET_RELEASE_TAG}-bin-macos-cpu-x64.tar.gz`,
-      archiveName: `parakeet-macos-cpu-x64.tar.gz`,
-    });
-  } else if (platform === "linux" && arch === "x64") {
-    candidates.push(
-      {
-        url: `${PARAKEET_RELEASE_BASE}/parakeet-${PARAKEET_RELEASE_TAG}-bin-linux-cuda-x64.tar.gz`,
-        archiveName: `parakeet-linux-cuda-x64.tar.gz`,
-      },
-      {
-        url: `${PARAKEET_RELEASE_BASE}/parakeet-${PARAKEET_RELEASE_TAG}-bin-linux-vulkan-x64.tar.gz`,
-        archiveName: `parakeet-linux-vulkan-x64.tar.gz`,
-      },
-      {
-        url: `${PARAKEET_RELEASE_BASE}/parakeet-${PARAKEET_RELEASE_TAG}-bin-linux-cpu-x64.tar.gz`,
-        archiveName: `parakeet-linux-cpu-x64.tar.gz`,
-      },
-    );
-  } else if (platform === "linux" && arch === "arm64") {
-    candidates.push({
-      url: `${PARAKEET_RELEASE_BASE}/parakeet-${PARAKEET_RELEASE_TAG}-bin-linux-cpu-arm64.tar.gz`,
-      archiveName: `parakeet-linux-cpu-arm64.tar.gz`,
-    });
-  }
-
-  return candidates;
-}
-
-async function downloadPrebuiltBinaries(): Promise<void> {
+async function downloadPrebuiltBinaries(
+  backend: ResolvedBackend,
+): Promise<void> {
   const binDir = getBinDir();
   if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
 
-  const candidates = getReleaseAssetCandidates();
-  if (candidates.length === 0) {
+  const asset = getReleaseAsset(backend);
+  if (!asset) {
     throw new Error(
-      `No pre-built parakeet.cpp binaries for platform=${process.platform} arch=${process.arch}. Building from source is required.`,
+      `No pre-built parakeet.cpp binary for backend=${backend} on platform=${process.platform} arch=${process.arch}.`,
     );
   }
 
-  let lastError: Error | null = null;
-  for (const candidate of candidates) {
+  try {
+    await downloadAndExtract(asset, binDir);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to download parakeet.cpp (${backend}): ${msg}`);
+  }
+
+  // CUDA on Windows needs the cudart DLL bundle alongside the binary.
+  if (asset.cudartUrl && asset.cudartArchiveName) {
     try {
-      await downloadAndExtract(candidate, binDir);
-      const { isServerBinaryAvailable, resetBinaryCache } = await import(
-        "./binary.js"
-      );
-      resetBinaryCache();
-      if (isServerBinaryAvailable()) {
-        log.info(
-          `parakeet.cpp binaries installed from ${candidate.archiveName}`,
-        );
-        return;
-      }
-      log.warn(
-        `Downloaded ${candidate.archiveName} but parakeet-server not found, trying next candidate`,
+      await downloadAndExtract(
+        {
+          url: asset.cudartUrl,
+          archiveName: asset.cudartArchiveName,
+        },
+        binDir,
       );
     } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
       log.warn(
-        `Failed to download ${candidate.archiveName}: ${lastError.message}, trying next candidate`,
+        `parakeet CUDA runtime download failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
 
+  const { isServerBinaryAvailable, resetBinaryCache } = await import(
+    "./binary.js"
+  );
+  resetBinaryCache();
+  if (isServerBinaryAvailable()) {
+    writeBackendMarker(binDir, backend);
+    log.info(`parakeet.cpp ${backend} binaries installed`);
+    return;
+  }
+
   throw new Error(
-    `Failed to download parakeet.cpp binaries from any source.${
-      lastError ? ` Last error: ${lastError.message}` : ""
-    }`,
+    `parakeet-cli not found after extracting ${asset.archiveName}`,
   );
 }
 
@@ -408,7 +412,7 @@ async function downloadAndExtract(
 
   const totalSize = Number(res.headers.get("content-length") ?? 0);
   let downloaded = 0;
-  const progressStream = new Readable({
+  const _progressStream = new Readable({
     read() {},
   });
   const fileStream = createWriteStream(archivePath);

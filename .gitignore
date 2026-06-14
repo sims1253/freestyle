@@ -53,6 +53,9 @@ apps/electron/resources/bin/
 # Downloaded whisper.cpp binaries
 apps/electron/resources/whisper/
 
+# Downloaded parakeet.cpp binaries
+apps/electron/resources/parakeet/
+
 # Test artifacts
 test-results/
 

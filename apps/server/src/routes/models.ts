@@ -177,6 +177,7 @@ const SUPPORTED_LLM_PROVIDERS = new Set([
   "google",
   "groq",
   "mistral",
+  "zai",
 ]);
 
 // One fast-tier cleanup model per provider, surfaced by default; everything
@@ -191,6 +192,8 @@ const CURATED_LLM_IDS = new Set([
   "anthropic/claude-haiku-4-5",
   "google/gemini-2.5-flash",
   "mistral/mistral-small-latest",
+  "zai/glm-4.7",
+  "zai/glm-5.2",
 ]);
 
 const BUILTIN_LLM_MODELS: AvailableModel[] = [
@@ -202,6 +205,50 @@ const BUILTIN_LLM_MODELS: AvailableModel[] = [
     family: "mistral",
     type: "llm",
     curated: true,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.AI",
+    model_id: "glm-5.2",
+    model_name: "GLM-5.2",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.AI",
+    model_id: "glm-5-turbo",
+    model_name: "GLM-5-Turbo",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.AI",
+    model_id: "glm-4.7",
+    model_name: "GLM-4.7",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.AI",
+    model_id: "glm-4.5-air",
+    model_name: "GLM-4.5-Air",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
   },
 ];
 
@@ -261,6 +308,7 @@ export async function isCleanupModelSupported(
   modelId: string,
 ): Promise<boolean> {
   if (providerId === "local-llm") return true;
+  if (providerId === "zai") return true;
 
   try {
     const registry = await fetchModelsFromRegistry();
@@ -415,7 +463,7 @@ const models = new Hono()
     const db = getDb();
     const rows = db
       .prepare(
-        "SELECT id, provider, model_id, model_name, type, is_default, created_at FROM model_configs ORDER BY type, is_default DESC, created_at DESC",
+        "SELECT id, provider, model_id, model_name, type, is_default, max_output_tokens, context_length, created_at FROM model_configs ORDER BY type, is_default DESC, created_at DESC",
       )
       .all() as {
       id: number;
@@ -424,6 +472,8 @@ const models = new Hono()
       model_name: string;
       type: string;
       is_default: number;
+      max_output_tokens: number | null;
+      context_length: number | null;
       created_at: string;
     }[];
     return c.json(rows);
@@ -513,6 +563,32 @@ const models = new Hono()
       isServerBinaryAvailable()
     ) {
       startInBackground(stripProviderPrefix(row.model_id));
+    }
+
+    return c.json({ ok: true });
+  })
+  .put("/configured/:id/settings", async (c) => {
+    const db = getDb();
+    const id = Number(c.req.param("id"));
+    const body = await c.req.json<{
+      max_output_tokens?: number | null;
+      context_length?: number | null;
+    }>();
+
+    const existing = db
+      .prepare("SELECT id FROM model_configs WHERE id = ?")
+      .get(id);
+    if (!existing) return c.json({ error: "Not found" }, 404);
+
+    if (body.max_output_tokens !== undefined) {
+      db.prepare(
+        "UPDATE model_configs SET max_output_tokens = ? WHERE id = ?",
+      ).run(body.max_output_tokens, id);
+    }
+    if (body.context_length !== undefined) {
+      db.prepare(
+        "UPDATE model_configs SET context_length = ? WHERE id = ?",
+      ).run(body.context_length, id);
     }
 
     return c.json({ ok: true });

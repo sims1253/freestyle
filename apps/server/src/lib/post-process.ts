@@ -4,10 +4,14 @@ import { generateText } from "ai";
 import { getModelCost, isCleanupModelSupported } from "../routes/models.js";
 import { getDb } from "./db.js";
 import { applyDictionaryReplacements } from "./dictionary-replacements.js";
+import type { MaxOutputTokensOptions } from "./editor/max-output-tokens.js";
 import { maxOutputTokensForCleanup } from "./editor/max-output-tokens.js";
 import { sanitizeTranscriptText } from "./editor/model-hints.js";
 import { buildRewritePrompt } from "./editor/prompts.js";
-import { getRewritePromptContext } from "./editor/rewrite-context.js";
+import {
+  getRewritePromptContext,
+  getRewritePromptContextById,
+} from "./editor/rewrite-context.js";
 import {
   getGroqChatModel,
   normalizeGroqModelId,
@@ -15,6 +19,7 @@ import {
 } from "./groq-http.js";
 import { capture, captureException } from "./posthog.js";
 import { createChatModel, getDefaultModels } from "./providers.js";
+import { getApiKeyForProvider } from "./streaming-stt.js";
 
 const log = createAppLogger("post-process");
 
@@ -44,6 +49,8 @@ export interface PostProcessOptions {
   language?: string;
   /** Return handoff/llm timing breakdown for pipeline logs. */
   includeTimings?: boolean;
+  /** Force a specific format rule by ID (from shortcut activation). */
+  formatId?: number;
 }
 
 function isLlmCleanupEnabled(db: ReturnType<typeof getDb>): boolean {
@@ -113,6 +120,33 @@ async function prewarmLocalLlm(modelId: string): Promise<void> {
   }
 }
 
+interface ModelConfigOverride {
+  maxOutputTokens: number | null;
+  contextLength: number | null;
+}
+
+function getModelConfigOverride(
+  provider: string,
+  modelId: string,
+  db: ReturnType<typeof getDb>,
+): ModelConfigOverride {
+  try {
+    const row = db
+      .prepare(
+        "SELECT max_output_tokens, context_length FROM model_configs WHERE provider = ? AND model_id = ? AND type = 'llm' LIMIT 1",
+      )
+      .get(provider, modelId) as
+      | { max_output_tokens: number | null; context_length: number | null }
+      | undefined;
+    return {
+      maxOutputTokens: row?.max_output_tokens ?? null,
+      contextLength: row?.context_length ?? null,
+    };
+  } catch {
+    return { maxOutputTokens: null, contextLength: null };
+  }
+}
+
 /**
  * Run LLM cleanup and dictionary replacements on transcribed text.
  * Returns the cleaned text plus metadata for history tracking.
@@ -159,7 +193,10 @@ export async function postProcess(
         `Skipping LLM cleanup: unsupported cleanup model ${llm.provider}/${llm.model_id}`,
       );
     } else {
-      const rewriteContext = getRewritePromptContext(appContext, db);
+      const rewriteContext = options.formatId
+        ? (getRewritePromptContextById(options.formatId, db) ??
+          getRewritePromptContext(appContext, db))
+        : getRewritePromptContext(appContext, db);
       let customSystemPrompt: string | undefined;
       try {
         const promptRow = db
@@ -169,39 +206,104 @@ export async function postProcess(
           .get() as { value: string } | undefined;
         if (promptRow?.value) customSystemPrompt = promptRow.value;
       } catch {}
+
+      // Resolve which model to use: format override takes priority, then default
+      const formatProvider = rewriteContext.llmProvider;
+      const formatModelId = rewriteContext.llmModelId;
+      const usingFormatModel = !!(formatProvider && formatModelId);
+      const effectiveProvider = usingFormatModel
+        ? formatProvider!
+        : llm.provider;
+      const effectiveModelId = usingFormatModel ? formatModelId! : llm.model_id;
+
+      // If the format specifies a model, verify it is supported and has a key
+      if (usingFormatModel) {
+        const isLocal =
+          effectiveProvider === "local-llm" ||
+          effectiveProvider === "local-whisper";
+        if (!isLocal) {
+          const key = getApiKeyForProvider(effectiveProvider);
+          if (!key) {
+            log.error(
+              `Format specified model ${effectiveProvider}/${effectiveModelId} but no API key is configured`,
+            );
+            throw new Error(
+              `Format model ${effectiveProvider}/${effectiveModelId} has no API key configured`,
+            );
+          }
+        }
+        if (
+          !(await isCleanupModelSupported(effectiveProvider, effectiveModelId))
+        ) {
+          log.error(
+            `Format specified unsupported cleanup model ${effectiveProvider}/${effectiveModelId}`,
+          );
+          throw new Error(
+            `Format model ${effectiveProvider}/${effectiveModelId} is not supported for cleanup`,
+          );
+        }
+        log.info(
+          `Using format-specified model: ${effectiveProvider}/${effectiveModelId}`,
+        );
+      }
+
+      // Resolve token budget: format override > model config > formula
+      const modelConfig = getModelConfigOverride(
+        effectiveProvider,
+        effectiveModelId,
+        db,
+      );
+      const tokenOptions: MaxOutputTokensOptions = {
+        override:
+          rewriteContext.maxOutputTokens ?? modelConfig.maxOutputTokens ?? null,
+        contextLength: modelConfig.contextLength ?? null,
+      };
+
       const { system, prompt } = buildRewritePrompt(normalizedRawText, {
         contextHint: rewriteContext.contextHint || undefined,
         language: options.language,
         registerMode: rewriteContext.registerMode,
         customSystemPrompt,
+        systemPromptOverride: rewriteContext.systemPromptOverride ?? undefined,
       });
 
       handoffMs = Date.now() - handoffStart;
 
       try {
-        const chatModel = resolveChatModel(llm.provider, llm.model_id);
+        const chatModel = resolveChatModel(effectiveProvider, effectiveModelId);
         const result = await generateText({
           model: chatModel,
           system,
           prompt,
           temperature: 0,
-          maxOutputTokens: maxOutputTokensForCleanup(normalizedRawText),
-          ...(llm.provider === "groq"
+          maxOutputTokens: maxOutputTokensForCleanup(
+            normalizedRawText,
+            tokenOptions,
+          ),
+          ...(effectiveProvider === "groq"
             ? {
-                providerOptions: groqCleanupProviderOptions(llm.model_id),
+                providerOptions: groqCleanupProviderOptions(effectiveModelId),
               }
-            : {}),
+            : effectiveProvider === "local-llm"
+              ? {
+                  providerOptions: {
+                    openai: {
+                      reasoningEffort: "minimal",
+                    },
+                  },
+                }
+              : {}),
         });
         inputTokens = result.usage?.inputTokens ?? 0;
         outputTokens = result.usage?.outputTokens ?? 0;
-        llmProvider = llm.provider;
-        llmModel = llm.model_id;
+        llmProvider = effectiveProvider;
+        llmModel = effectiveModelId;
         cleanedText = sanitizeTranscriptText(result.text);
       } catch (err) {
         captureException(err);
         capture("post process failed", {
-          provider: llm.provider,
-          model: llm.model_id,
+          provider: effectiveProvider,
+          model: effectiveModelId,
           source,
         });
         log.error(`LLM cleanup failed: ${err}`);

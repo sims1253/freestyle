@@ -120,6 +120,10 @@ export default function AppPage(): React.JSX.Element {
   const sessionStreamingRef = useRef(false);
 
   const [pendingCount, setPendingCount] = useState(0);
+  const [activeFormatLabel, setActiveFormatLabel] = useState<string | null>(
+    null,
+  );
+  const activeFormatIdRef = useRef<number | null>(null);
 
   const recorderRef = useRef(new Recorder());
   const streamerRef = useRef<Streamer | null>(null);
@@ -728,6 +732,8 @@ export default function AppPage(): React.JSX.Element {
     };
     if (appContextRef.current)
       headers["x-app-context"] = encodeAppContext(appContextRef.current);
+    if (activeFormatIdRef.current)
+      headers["x-format-id"] = String(activeFormatIdRef.current);
     if (isSubsequent) headers["x-skip-post-process"] = "true";
 
     const serverOk = await refreshApiBase();
@@ -835,9 +841,20 @@ export default function AppPage(): React.JSX.Element {
     const removeOutputMode = window.api?.onOutputModeChanged((mode) => {
       _outputMode = mode;
     });
+    // Format shortcut activation
+    const removeFormatActivated = window.api?.onFormatActivated((data) => {
+      activeFormatIdRef.current = data.id;
+      setActiveFormatLabel(data.label);
+    });
+    const removeFormatDeactivated = window.api?.onFormatDeactivated(() => {
+      activeFormatIdRef.current = null;
+      setActiveFormatLabel(null);
+    });
     return () => {
       removePillPos?.();
       removeOutputMode?.();
+      removeFormatActivated?.();
+      removeFormatDeactivated?.();
     };
   }, [applyPillPosition]);
 
@@ -1003,6 +1020,10 @@ export default function AppPage(): React.JSX.Element {
         style={{
           marginBottom: pillAlign === "end" ? 8 : "auto",
           marginTop: pillAlign === "start" ? 8 : "auto",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 2,
         }}
       >
         <div
@@ -1076,6 +1097,21 @@ export default function AppPage(): React.JSX.Element {
             )}
           </div>
         </div>
+        {activeFormatLabel && state !== "idle" && (
+          <span
+            className="mono"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase" as const,
+              color: "var(--primary)",
+              opacity: 0.8,
+              WebkitAppRegion: "no-drag",
+            }}
+          >
+            {activeFormatLabel}
+          </span>
+        )}
       </div>
     </div>
   );

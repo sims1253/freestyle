@@ -148,6 +148,8 @@ let accessibilityConfirmed = false;
 let hotkeyPressed = false;
 let currentHotkeyAccel: string | null = null;
 let hotkeyActivationMode: "hold" | "toggle" = "hold";
+let activeFormatId: number | null = null;
+const registeredFormatShortcuts = new Set<string>();
 let micListener: MicListener | null = null;
 let hotkeyRecorder: HotkeyRecorder | null = null;
 
@@ -1635,6 +1637,16 @@ app.whenReady().then(async () => {
     hotkeyPressed = false;
     scheduleHotkeyRegistration(currentHotkeyAccel ?? undefined);
   });
+
+  // -- Format shortcuts --
+  registerFormatShortcuts();
+
+  // Re-register when formats change from the UI
+  ipcMain.on("formats:changed", () => {
+    registerFormatShortcuts();
+  });
+
+  ipcMain.handle("format:get-active", () => activeFormatId);
 });
 
 const DEFAULT_HOTKEY = getDefaultHotkey();
@@ -1723,6 +1735,50 @@ function loadHotkeyModeFromDB(): "hold" | "toggle" {
     // Ignore errors
   }
   return "hold";
+}
+
+function registerFormatShortcuts(): void {
+  // Unregister previous format shortcuts
+  for (const accel of registeredFormatShortcuts) {
+    try {
+      globalShortcut.unregister(accel);
+    } catch {}
+  }
+  registeredFormatShortcuts.clear();
+
+  try {
+    const res = net.fetch(
+      `http://127.0.0.1:${serverPort}/api/formats?limit=200`,
+    );
+    res
+      .then(async (r) => {
+        if (!r.ok) return;
+        const data = (await r.json()) as {
+          items: { id: number; shortcut: string | null; label: string }[];
+        };
+        for (const fmt of data.items) {
+          if (!fmt.shortcut) continue;
+          const accel = fmt.shortcut;
+          if (
+            globalShortcut.register(accel, () => {
+              if (activeFormatId === fmt.id) {
+                activeFormatId = null;
+                mainWindow?.webContents.send("format:deactivated");
+              } else {
+                activeFormatId = fmt.id;
+                mainWindow?.webContents.send("format:activated", {
+                  id: fmt.id,
+                  label: fmt.label,
+                });
+              }
+            })
+          ) {
+            registeredFormatShortcuts.add(accel);
+          }
+        }
+      })
+      .catch(() => {});
+  } catch {}
 }
 
 function sendHotkeyDown(): void {

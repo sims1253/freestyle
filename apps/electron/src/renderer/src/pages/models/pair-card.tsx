@@ -18,6 +18,7 @@ export function PairCard({
   onChangeVoice,
   onChangeLlm,
   onConfigureWarming,
+  onConfigureParakeet,
 }: {
   voice: ConfiguredModel | undefined;
   llm: ConfiguredModel | undefined;
@@ -27,7 +28,29 @@ export function PairCard({
   onChangeLlm: () => void;
   /** When set, shows a "Configure model warming" link by the voice button. */
   onConfigureWarming?: () => void;
+  /** When set, shows a "Compute backend" link by the voice button. */
+  onConfigureParakeet?: () => void;
 }): React.JSX.Element {
+  // At most one engine is active at a time, so the two links are mutually
+  // exclusive. Precedence: MLX warming, then parakeet backend.
+  const configureLink = onConfigureWarming ? (
+    <button
+      type="button"
+      onClick={onConfigureWarming}
+      className="text-primary ml-auto text-[12px] font-medium underline-offset-2 hover:underline"
+    >
+      Configure model warming
+    </button>
+  ) : onConfigureParakeet ? (
+    <button
+      type="button"
+      onClick={onConfigureParakeet}
+      className="text-primary ml-auto text-[12px] font-medium underline-offset-2 hover:underline"
+    >
+      Compute backend
+    </button>
+  ) : undefined;
+
   return (
     <section className="border-border bg-card grid grid-cols-1 gap-6 rounded-[14px] border p-6 min-[820px]:grid-cols-2">
       <PairSide
@@ -37,17 +60,7 @@ export function PairCard({
         cta="Change"
         primary
         onChange={onChangeVoice}
-        accessory={
-          onConfigureWarming ? (
-            <button
-              type="button"
-              onClick={onConfigureWarming}
-              className="text-primary ml-auto text-[12px] font-medium underline-offset-2 hover:underline"
-            >
-              Configure model warming
-            </button>
-          ) : undefined
-        }
+        accessory={configureLink}
       />
       <div className="border-border border-t pt-6 min-[820px]:border-l min-[820px]:border-t-0 min-[820px]:pl-6 min-[820px]:pt-0">
         <PairSide

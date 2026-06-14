@@ -188,22 +188,33 @@ export function buildRewritePrompt(
     language?: string;
     registerMode?: RewriteRegisterMode;
     customSystemPrompt?: string;
+    /** When set, replaces the entire base system prompt. The contextHint is appended as a direct instruction, not a weak hint. */
+    systemPromptOverride?: string;
   },
 ): { system: string; prompt: string } {
-  const baseSystem =
-    options?.customSystemPrompt?.trim() || UNIFIED_REWRITE_SYSTEM;
+  const hasOverride = !!options?.systemPromptOverride?.trim();
+  const baseSystem = hasOverride
+    ? options!.systemPromptOverride!.trim()
+    : options?.customSystemPrompt?.trim() || UNIFIED_REWRITE_SYSTEM;
+
   const contextHint = options?.contextHint?.trim()
     ? sanitizeContextHint(options.contextHint.trim())
     : "";
   const contextBlock = contextHint
-    ? `\n\nWeak context hint: use this only when the transcript already clearly implies it. Never change tone, shorten the text, or add new structure because of this hint.\n${contextHint}`
+    ? hasOverride
+      ? `\n\n${contextHint}`
+      : `\n\nWeak context hint: use this only when the transcript already clearly implies it. Never change tone, shorten the text, or add new structure because of this hint.\n${contextHint}`
     : "";
-  const registerBlock = buildRegisterBlock(options?.registerMode ?? "neutral");
+  const registerBlock = hasOverride
+    ? ""
+    : buildRegisterBlock(options?.registerMode ?? "neutral");
   const languageBlock = buildLanguageBlock(options?.language);
 
   return {
     system: baseSystem + languageBlock + contextBlock + registerBlock,
-    prompt: `<transcript>\n${inputText}\n</transcript>`,
+    prompt: hasOverride
+      ? inputText
+      : `<transcript>\n${inputText}\n</transcript>`,
   };
 }
 

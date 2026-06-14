@@ -12,11 +12,23 @@ interface FormatRuleRow {
   app_pattern: string;
   label?: string;
   instructions: string;
+  llm_provider?: string | null;
+  llm_model_id?: string | null;
+  max_output_tokens?: number | null;
+  system_prompt_override?: string | null;
+  shortcut?: string | null;
 }
 
 export interface RewritePromptContext {
   contextHint: string;
   registerMode: RewriteRegisterMode;
+  /** Format-specified LLM override (null = use default model). */
+  llmProvider: string | null;
+  llmModelId: string | null;
+  /** Format-specified max output tokens override (null = use model config or formula). */
+  maxOutputTokens: number | null;
+  /** When set, replaces the base system prompt entirely instead of using a weak hint. */
+  systemPromptOverride: string | null;
 }
 
 const FORMAL_RULE_LABELS = new Set([
@@ -99,19 +111,28 @@ export function getRewritePromptContext(
   rawContext: string | null,
   db: DatabaseSync,
 ): RewritePromptContext {
+  const empty: RewritePromptContext = {
+    contextHint: "",
+    registerMode: "neutral",
+    llmProvider: null,
+    llmModelId: null,
+    maxOutputTokens: null,
+    systemPromptOverride: null,
+  };
+
   if (!rawContext) {
-    return { contextHint: "", registerMode: "neutral" };
+    return empty;
   }
 
   const matchStr = buildMatchContext(rawContext);
   if (!matchStr) {
-    return { contextHint: "", registerMode: "neutral" };
+    return empty;
   }
 
   try {
     const rows = db
       .prepare(
-        "SELECT app_pattern, label, instructions FROM format_rules ORDER BY is_default ASC, id DESC",
+        "SELECT app_pattern, label, instructions, llm_provider, llm_model_id, max_output_tokens, system_prompt_override FROM format_rules ORDER BY is_default ASC, id DESC",
       )
       .all() as unknown as FormatRuleRow[];
 
@@ -126,6 +147,10 @@ export function getRewritePromptContext(
               registerModeFromLabel === "neutral"
                 ? inferRegisterModeFromMatchText(matchStr)
                 : registerModeFromLabel,
+            llmProvider: row.llm_provider ?? null,
+            llmModelId: row.llm_model_id ?? null,
+            maxOutputTokens: row.max_output_tokens ?? null,
+            systemPromptOverride: row.system_prompt_override ?? null,
           };
         }
       }
@@ -138,6 +163,7 @@ export function getRewritePromptContext(
     const ctx = JSON.parse(rawContext) as { app?: string };
     if (ctx.app) {
       return {
+        ...empty,
         contextHint: `The user is dictating in ${ctx.app}.`,
         registerMode: inferRegisterModeFromMatchText(matchStr),
       };
@@ -147,7 +173,43 @@ export function getRewritePromptContext(
   }
 
   return {
-    contextHint: "",
+    ...empty,
     registerMode: inferRegisterModeFromMatchText(matchStr),
   };
+}
+
+export function getRewritePromptContextById(
+  formatId: number,
+  db: DatabaseSync,
+): RewritePromptContext | null {
+  const empty: RewritePromptContext = {
+    contextHint: "",
+    registerMode: "neutral",
+    llmProvider: null,
+    llmModelId: null,
+    maxOutputTokens: null,
+    systemPromptOverride: null,
+  };
+
+  try {
+    const row = db
+      .prepare(
+        "SELECT app_pattern, label, instructions, llm_provider, llm_model_id, max_output_tokens, system_prompt_override FROM format_rules WHERE id = ?",
+      )
+      .get(formatId) as FormatRuleRow | undefined;
+
+    if (!row) return null;
+
+    const registerModeFromLabel = inferRegisterModeFromLabel(row.label);
+    return {
+      contextHint: row.instructions,
+      registerMode: registerModeFromLabel,
+      llmProvider: row.llm_provider ?? null,
+      llmModelId: row.llm_model_id ?? null,
+      maxOutputTokens: row.max_output_tokens ?? null,
+      systemPromptOverride: row.system_prompt_override ?? null,
+    };
+  } catch {
+    return null;
+  }
 }

@@ -2,7 +2,10 @@ import { createAppLogger } from "@freestyle/utils";
 import { isBinaryAvailable } from "../../parakeet/binary.js";
 import { PARAKEET_PROVIDER_ID } from "../../parakeet/constants.js";
 import { ensureBinariesDownloaded } from "../../parakeet/models.js";
-import { transcribeViaCli } from "../../parakeet/server.js";
+import {
+  readParakeetBackendSetting,
+  transcribeViaCli,
+} from "../../parakeet/server.js";
 import type {
   TranscribeOptions,
   TranscribeResult,
@@ -22,7 +25,8 @@ export class ParakeetLocalTranscriptionProvider
 
     if (!isBinaryAvailable()) {
       try {
-        await ensureBinariesDownloaded();
+        // Respect the user's backend setting for the first download.
+        await ensureBinariesDownloaded(readParakeetBackendSetting() ?? "auto");
       } catch (err) {
         throw new Error(
           `parakeet-cli binary not found and automatic setup failed: ${err instanceof Error ? err.message : String(err)}`,

@@ -9,6 +9,11 @@ interface FormatRow {
   label: string;
   instructions: string;
   is_default: number;
+  llm_provider: string | null;
+  llm_model_id: string | null;
+  max_output_tokens: number | null;
+  system_prompt_override: string | null;
+  shortcut: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -96,9 +101,18 @@ const formats = new Hono()
 
     const result = db
       .prepare(
-        "INSERT INTO format_rules (app_pattern, label, instructions, is_default) VALUES (?, ?, ?, 0)",
+        "INSERT INTO format_rules (app_pattern, label, instructions, is_default, llm_provider, llm_model_id, max_output_tokens, system_prompt_override, shortcut) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)",
       )
-      .run(body.app_pattern, body.label, body.instructions);
+      .run(
+        body.app_pattern,
+        body.label,
+        body.instructions,
+        body.llm_provider ?? null,
+        body.llm_model_id ?? null,
+        body.max_output_tokens ?? null,
+        body.system_prompt_override ?? null,
+        body.shortcut ?? null,
+      );
 
     return c.json({ id: result.lastInsertRowid, ...body }, 201);
   })
@@ -113,11 +127,24 @@ const formats = new Hono()
     if (!existing) return c.json({ error: "Not found" }, 404);
 
     db.prepare(
-      "UPDATE format_rules SET app_pattern = ?, label = ?, instructions = ?, updated_at = datetime('now') WHERE id = ?",
+      "UPDATE format_rules SET app_pattern = ?, label = ?, instructions = ?, llm_provider = ?, llm_model_id = ?, max_output_tokens = ?, system_prompt_override = ?, shortcut = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(
       body.app_pattern ?? existing.app_pattern,
       body.label ?? existing.label,
       body.instructions ?? existing.instructions,
+      body.llm_provider !== undefined
+        ? body.llm_provider
+        : existing.llm_provider,
+      body.llm_model_id !== undefined
+        ? body.llm_model_id
+        : existing.llm_model_id,
+      body.max_output_tokens !== undefined
+        ? body.max_output_tokens
+        : existing.max_output_tokens,
+      body.system_prompt_override !== undefined
+        ? body.system_prompt_override
+        : existing.system_prompt_override,
+      body.shortcut !== undefined ? body.shortcut : existing.shortcut,
       id,
     );
 

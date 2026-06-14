@@ -69,6 +69,10 @@ const transcribeRoute = new Hono().post("/", async (c) => {
   }
 
   const appContext = decodeAppContext(c.req.header("x-app-context"));
+  const formatIdHeader = c.req.header("x-format-id");
+  const formatId = formatIdHeader
+    ? Number(formatIdHeader) || undefined
+    : undefined;
 
   let audioDurationMs = 0;
   if (audioData.length > 44) {
@@ -199,6 +203,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
   const pp = await postProcess(rawText, appContext, {
     language,
     source: "batch",
+    ...(formatId ? { formatId } : {}),
   });
   log.debug(
     `post-process took ${Date.now() - ppStart}ms | cleaned=${JSON.stringify(pp.cleaned).slice(0, 120)}`,

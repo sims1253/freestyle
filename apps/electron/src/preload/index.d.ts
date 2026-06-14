@@ -97,6 +97,13 @@ declare global {
       onMicActivityChanged: (
         callback: (state: "active" | "inactive" | "unknown") => void,
       ) => () => void;
+      // Format shortcuts
+      getActiveFormatId: () => Promise<number | null>;
+      onFormatActivated: (
+        callback: (data: { id: number; label: string }) => void,
+      ) => () => void;
+      onFormatDeactivated: (callback: () => void) => () => void;
+      notifyFormatsChanged: () => void;
     };
   }
 }

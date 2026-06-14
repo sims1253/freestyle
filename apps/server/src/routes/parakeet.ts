@@ -1,28 +1,46 @@
 import { createAppLogger } from "@freestyle/utils";
 import { Hono } from "hono";
-import { isBinaryAvailable } from "../lib/parakeet/binary.js";
 import {
-  getModelsDir,
-  PARAKEET_PROVIDER_ID,
-} from "../lib/parakeet/constants.js";
+  backendLabel,
+  getAvailableBackends,
+  getPlatformDefaultBackend,
+  type ParakeetBackend,
+} from "../lib/parakeet/backends.js";
+import { isBinaryAvailable } from "../lib/parakeet/binary.js";
+import { getModelsDir } from "../lib/parakeet/constants.js";
 import {
   cancelDownload,
   clearDownloadError,
   deleteModel,
   downloadModel,
+  ensureBinariesDownloaded,
   getAllModelStatuses,
   getCatalogModels,
+  getInstalledBackend,
   getModelStatus,
   isBinaryDownloading,
 } from "../lib/parakeet/models.js";
+import {
+  getCurrentBackend,
+  readParakeetBackendSetting,
+} from "../lib/parakeet/server.js";
 import { capture } from "../lib/posthog.js";
-import { getDefaultModels } from "../lib/providers.js";
-import { stripProviderPrefix } from "../lib/streaming/types.js";
 
 const log = createAppLogger("parakeet");
 
+const VALID_BACKENDS = new Set<ParakeetBackend>([
+  "auto",
+  "cpu",
+  "vulkan",
+  "cuda",
+  "metal",
+]);
+
 const parakeet = new Hono()
   .get("/status", (c) => {
+    const preference = readParakeetBackendSetting();
+    const installed = getInstalledBackend();
+    const available = getAvailableBackends();
     return c.json({
       binaryAvailable: isBinaryAvailable(),
       binaryDownloading: isBinaryDownloading(),
@@ -43,6 +61,12 @@ const parakeet = new Hono()
         quality: m.quality,
         quantized: m.quantized,
       })),
+      // Compute backend selection
+      computeBackend: preference ?? "auto",
+      availableBackends: available,
+      platformDefaultBackend: getPlatformDefaultBackend(),
+      installedBackend: installed,
+      activeBackend: getCurrentBackend(),
     });
   })
   .post("/models/:model/download", async (c) => {
@@ -91,6 +115,30 @@ const parakeet = new Hono()
   .post("/server/stop", async (c) => {
     // parakeet-cli is invoked per-request; no persistent server to stop.
     return c.json({ ok: true });
+  })
+  .post("/binary/download", async (c) => {
+    // Trigger (or no-op) the binary download for the requested backend. Used
+    // when the user switches GPU backends in the picker. CPU is a no-op since
+    // it forces the device on the existing binary rather than re-downloading.
+    const body = (await c.req.json().catch(() => ({}))) as {
+      backend?: string;
+    };
+    const backend = (body.backend ?? "auto") as ParakeetBackend;
+    if (!VALID_BACKENDS.has(backend)) {
+      return c.json({ error: `Unknown backend: ${body.backend}` }, 400);
+    }
+
+    try {
+      await ensureBinariesDownloaded(backend);
+      capture("parakeet backend downloaded", {
+        backend: backendLabel(backend),
+      });
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn(`parakeet binary download failed: ${message}`);
+      return c.json({ error: message }, 500);
+    }
   });
 
 export default parakeet;

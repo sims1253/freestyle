@@ -214,6 +214,23 @@ const api = {
     ipcRenderer.on("mic:activity-changed", handler);
     return () => ipcRenderer.removeListener("mic:activity-changed", handler);
   },
+  // Format shortcuts
+  getActiveFormatId: (): Promise<number | null> =>
+    ipcRenderer.invoke("format:get-active"),
+  onFormatActivated: (
+    callback: (data: { id: number; label: string }) => void,
+  ): (() => void) => {
+    const handler = (_: unknown, data: { id: number; label: string }): void =>
+      callback(data);
+    ipcRenderer.on("format:activated", handler);
+    return () => ipcRenderer.removeListener("format:activated", handler);
+  },
+  onFormatDeactivated: (callback: () => void): (() => void) => {
+    const handler = (): void => callback();
+    ipcRenderer.on("format:deactivated", handler);
+    return () => ipcRenderer.removeListener("format:deactivated", handler);
+  },
+  notifyFormatsChanged: (): void => ipcRenderer.send("formats:changed"),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

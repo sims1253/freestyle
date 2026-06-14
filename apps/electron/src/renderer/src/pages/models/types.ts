@@ -5,6 +5,8 @@ export interface ConfiguredModel {
   model_name: string;
   type: string;
   is_default: number;
+  max_output_tokens: number | null;
+  context_length: number | null;
 }
 
 export interface ApiKeyEntry {

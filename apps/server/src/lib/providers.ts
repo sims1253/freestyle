@@ -16,6 +16,7 @@ const PROVIDER_PREFIXED_CHAT_MODELS = new Set([
   "google",
   "mistral",
   "local-llm",
+  "zai",
 ]);
 
 const PROVIDER_FACTORIES: Record<
@@ -63,6 +64,13 @@ const PROVIDER_FACTORIES: Record<
 
     const p = createOpenAI({ apiKey, baseURL: `${baseURL}/v1` });
     return { chat: (m: string) => p.chat(m) };
+  },
+  zai: (apiKey) => {
+    const p = createOpenAI({
+      apiKey,
+      baseURL: "https://api.z.ai/api/coding/paas/v4",
+    });
+    return { chat: (m) => p.chat(m) };
   },
 };
 

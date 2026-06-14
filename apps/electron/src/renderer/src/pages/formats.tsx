@@ -1,4 +1,3 @@
-import type { CreateFormatInput } from "@freestyle/validations";
 import { createFormatSchema } from "@freestyle/validations";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { getClient } from "@renderer/lib/api";
@@ -13,8 +12,24 @@ interface FormatRule {
   label: string;
   instructions: string;
   is_default: number;
+  llm_provider: string | null;
+  llm_model_id: string | null;
+  max_output_tokens: number | null;
+  system_prompt_override: string | null;
+  shortcut: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface FormatFormValues {
+  label: string;
+  app_pattern: string;
+  instructions: string;
+  llm_provider?: string;
+  llm_model_id?: string;
+  max_output_tokens?: number;
+  system_prompt_override?: string;
+  shortcut?: string;
 }
 
 export default function FormatsPage(): React.JSX.Element {
@@ -24,7 +39,7 @@ export default function FormatsPage(): React.JSX.Element {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const form = useForm<CreateFormatInput>({
+  const form = useForm<FormatFormValues>({
     resolver: zodResolver(createFormatSchema),
     defaultValues: { label: "", app_pattern: "", instructions: "" },
   });
@@ -53,7 +68,16 @@ export default function FormatsPage(): React.JSX.Element {
     setShowForm(false);
     setEditingId(null);
     setFormError(null);
-    form.reset({ label: "", app_pattern: "", instructions: "" });
+    form.reset({
+      label: "",
+      app_pattern: "",
+      instructions: "",
+      llm_provider: "",
+      llm_model_id: "",
+      max_output_tokens: undefined,
+      system_prompt_override: "",
+      shortcut: "",
+    });
   }, [form]);
 
   const startEdit = useCallback(
@@ -63,6 +87,11 @@ export default function FormatsPage(): React.JSX.Element {
         label: rule.label,
         app_pattern: rule.app_pattern,
         instructions: rule.instructions,
+        llm_provider: rule.llm_provider ?? "",
+        llm_model_id: rule.llm_model_id ?? "",
+        max_output_tokens: rule.max_output_tokens ?? undefined,
+        system_prompt_override: rule.system_prompt_override ?? "",
+        shortcut: rule.shortcut ?? "",
       });
       setFormError(null);
       setShowForm(true);
@@ -71,17 +100,51 @@ export default function FormatsPage(): React.JSX.Element {
   );
 
   const saveRule = useCallback(
-    async (data: CreateFormatInput) => {
+    async (data: FormatFormValues) => {
       setFormError(null);
 
       try {
         const client = getClient();
-        const res = editingId
-          ? await client.api.formats[":id"].$put({
-              param: { id: String(editingId) },
-              json: data,
-            })
-          : await client.api.formats.$post({ json: data });
+        let res: Response;
+        if (editingId) {
+          res = await client.api.formats[":id"].$put({
+            param: { id: String(editingId) },
+            json: {
+              label: data.label,
+              app_pattern: data.app_pattern,
+              instructions: data.instructions,
+              llm_provider: data.llm_provider?.trim() || null,
+              llm_model_id: data.llm_model_id?.trim() || null,
+              max_output_tokens: data.max_output_tokens || null,
+              system_prompt_override:
+                data.system_prompt_override?.trim() || null,
+              shortcut: data.shortcut?.trim() || null,
+            },
+          });
+        } else {
+          res = await client.api.formats.$post({
+            json: {
+              label: data.label,
+              app_pattern: data.app_pattern,
+              instructions: data.instructions,
+              ...(data.llm_provider?.trim()
+                ? { llm_provider: data.llm_provider.trim() }
+                : {}),
+              ...(data.llm_model_id?.trim()
+                ? { llm_model_id: data.llm_model_id.trim() }
+                : {}),
+              ...(data.max_output_tokens
+                ? { max_output_tokens: data.max_output_tokens }
+                : {}),
+              ...(data.system_prompt_override?.trim()
+                ? { system_prompt_override: data.system_prompt_override.trim() }
+                : {}),
+              ...(data.shortcut?.trim()
+                ? { shortcut: data.shortcut.trim() }
+                : {}),
+            },
+          });
+        }
 
         if (!res.ok) {
           const text = await res.text().catch(() => "");
@@ -91,6 +154,7 @@ export default function FormatsPage(): React.JSX.Element {
 
         resetForm();
         loadData();
+        window.api?.notifyFormatsChanged();
       } catch {
         setFormError("Failed to save.");
       }
@@ -104,6 +168,7 @@ export default function FormatsPage(): React.JSX.Element {
         param: { id: String(id) },
       });
       loadData();
+      window.api?.notifyFormatsChanged();
     },
     [loadData],
   );
@@ -111,6 +176,7 @@ export default function FormatsPage(): React.JSX.Element {
   const resetDefaults = useCallback(async () => {
     await getClient().api.formats.reset.$post();
     loadData();
+    window.api?.notifyFormatsChanged();
   }, [loadData]);
 
   const defaultRules = rules.filter((r) => r.is_default === 1);
@@ -141,7 +207,15 @@ export default function FormatsPage(): React.JSX.Element {
           <button
             type="button"
             onClick={() => {
-              form.reset({ label: "", app_pattern: "", instructions: "" });
+              form.reset({
+                label: "",
+                app_pattern: "",
+                instructions: "",
+                llm_provider: "",
+                llm_model_id: "",
+                max_output_tokens: undefined,
+                system_prompt_override: "",
+              });
               setEditingId(null);
               setFormError(null);
               setShowForm(true);
@@ -225,6 +299,83 @@ export default function FormatsPage(): React.JSX.Element {
                   )}
                 />
               </FormField>
+
+              {/* Advanced overrides */}
+              <div className="border-border mt-1 border-t pt-3.5">
+                <div className="mono text-muted-foreground mb-3 text-[10px] uppercase tracking-[0.16em]">
+                  Advanced · optional overrides
+                </div>
+                <div className="grid grid-cols-1 gap-3.5 min-[560px]:grid-cols-2">
+                  <FormField
+                    label="Override model · provider"
+                    hint="e.g. openai, anthropic, local-llm"
+                  >
+                    <input
+                      type="text"
+                      {...form.register("llm_provider")}
+                      placeholder="Default model"
+                      className="border-border bg-background mono w-full rounded-[7px] border px-[11px] py-2 text-[13px] outline-none"
+                    />
+                  </FormField>
+                  <FormField
+                    label="Override model · model ID"
+                    hint="e.g. openai/gpt-4o, local-llm/gemma-3-12b"
+                  >
+                    <input
+                      type="text"
+                      {...form.register("llm_model_id")}
+                      placeholder="Default model"
+                      className="border-border bg-background mono w-full rounded-[7px] border px-[11px] py-2 text-[13px] outline-none"
+                    />
+                  </FormField>
+                </div>
+                <div className="mt-3.5">
+                  <FormField
+                    label="Max output tokens · override"
+                    hint="Leave empty for auto-scaling. Clamped by context length if set."
+                  >
+                    <input
+                      type="number"
+                      {...form.register("max_output_tokens", {
+                        setValueAs: (v) =>
+                          v === "" || v === null || v === undefined
+                            ? undefined
+                            : Number(v),
+                      })}
+                      placeholder="Auto"
+                      className="border-border bg-background mono w-full rounded-[7px] border px-[11px] py-2 text-[13px] outline-none"
+                    />
+                  </FormField>
+                </div>
+                <div className="mt-3.5">
+                  <FormField
+                    label="System prompt override · replaces base prompt entirely"
+                    hint="When set, this replaces the transcript cleanup system prompt. The instructions above are appended as a direct context hint. Use this to change the task entirely (e.g. code generation)."
+                  >
+                    <textarea
+                      {...form.register("system_prompt_override")}
+                      placeholder="Leave empty for default transcript cleanup behavior…"
+                      rows={5}
+                      className={cn(
+                        "border-border bg-background w-full resize-y rounded-[7px] border px-[11px] py-2 text-[13px] leading-[1.5] outline-none",
+                      )}
+                    />
+                  </FormField>
+                </div>
+                <div className="mt-3.5">
+                  <FormField
+                    label="Shortcut · global accelerator"
+                    hint="Electron accelerator (e.g. CommandOrControl+Shift+1). Pressing it activates this format for the next dictation. Press again to deactivate."
+                  >
+                    <input
+                      type="text"
+                      {...form.register("shortcut")}
+                      placeholder="e.g. CommandOrControl+Shift+1"
+                      className="border-border bg-background mono w-full rounded-[7px] border px-[11px] py-2 text-[13px] outline-none"
+                    />
+                  </FormField>
+                </div>
+              </div>
               {formError && (
                 <p className="text-destructive text-xs">{formError}</p>
               )}
@@ -403,6 +554,29 @@ function FormatCard({
           >
             {rule.app_pattern}
           </span>
+          {rule.llm_provider && rule.llm_model_id && (
+            <span
+              className="mono bg-accent text-accent-foreground rounded-full px-1.5 py-[2px] text-[9px] tracking-[0.14em]"
+              title={`${rule.llm_provider}/${rule.llm_model_id}`}
+            >
+              {rule.llm_model_id}
+            </span>
+          )}
+          {rule.max_output_tokens && (
+            <span className="mono border-border bg-background text-muted-foreground rounded border px-[7px] py-[2px] text-[10px]">
+              {rule.max_output_tokens} tok
+            </span>
+          )}
+          {rule.system_prompt_override && (
+            <span className="mono bg-destructive/10 text-destructive rounded-full px-1.5 py-[2px] text-[9px] tracking-[0.14em]">
+              CUSTOM PROMPT
+            </span>
+          )}
+          {rule.shortcut && (
+            <span className="mono border-border bg-background text-muted-foreground rounded border px-[7px] py-[2px] text-[10px]">
+              {rule.shortcut}
+            </span>
+          )}
         </div>
         <p
           className="text-secondary-foreground m-0 max-w-[720px] text-[16px] leading-[1.55]"

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 12;
 
 const DEFAULT_FORMAT_RULES = [
   {
@@ -282,6 +282,41 @@ export function initSchema(db: DatabaseSync): void {
     } catch {
       // Column may already exist
     }
+  }
+
+  if (currentVersion < 10) {
+    // Per-model LLM overrides for output budget and context window
+    try {
+      db.exec("ALTER TABLE model_configs ADD COLUMN max_output_tokens INTEGER");
+    } catch {}
+    try {
+      db.exec("ALTER TABLE model_configs ADD COLUMN context_length INTEGER");
+    } catch {}
+
+    // Per-format overrides: use a specific LLM model and/or max output tokens
+    try {
+      db.exec("ALTER TABLE format_rules ADD COLUMN llm_provider TEXT");
+    } catch {}
+    try {
+      db.exec("ALTER TABLE format_rules ADD COLUMN llm_model_id TEXT");
+    } catch {}
+    try {
+      db.exec("ALTER TABLE format_rules ADD COLUMN max_output_tokens INTEGER");
+    } catch {}
+  }
+
+  if (currentVersion < 11) {
+    try {
+      db.exec(
+        "ALTER TABLE format_rules ADD COLUMN system_prompt_override TEXT",
+      );
+    } catch {}
+  }
+
+  if (currentVersion < 12) {
+    try {
+      db.exec("ALTER TABLE format_rules ADD COLUMN shortcut TEXT");
+    } catch {}
   }
 
   // Upsert schema version

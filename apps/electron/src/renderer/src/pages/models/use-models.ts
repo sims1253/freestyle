@@ -55,6 +55,8 @@ export interface UseModels {
 
   localLlm: LocalLlmState;
 
+  loadData: () => Promise<void>;
+
   // Actions — each refetches as needed
   configureModel: (
     model: AvailableModel,
@@ -79,6 +81,7 @@ export interface UseModels {
   selectLocalLlmModel: (modelName: string) => Promise<void>;
   setCleanup: (next: boolean) => void;
   saveMlxKeepAliveMinutes: (minutes: number) => void;
+  saveParakeetBackend: (backend: string) => void;
   deleteProvider: (provider: string) => Promise<void>;
 }
 
@@ -534,6 +537,36 @@ export function useModels(): UseModels {
       .catch((err) => console.error("Failed to save MLX ASR keep-alive:", err));
   }, []);
 
+  // Persist the parakeet compute backend. CPU is a runtime device override
+  // against the existing binary (no download); other GPU backends trigger a
+  // binary download when the installed backend doesn't already match.
+  const saveParakeetBackend = useCallback(
+    (backend: string) => {
+      const client = getClient();
+      client.api.settings[":key"]
+        .$put({
+          param: { key: "parakeet_compute_backend" },
+          json: { value: backend },
+        })
+        .then(() => {
+          // Optimistically refresh status so the picker reflects the new value.
+          loadParakeetStatus();
+          if (backend === "cpu" || backend === "auto") return;
+          const installed = parakeetStatus?.installedBackend;
+          if (installed && installed === backend) return;
+          // Fire-and-forget: progress is surfaced via status polling.
+          client.api.parakeet.binary.download
+            .$post({ json: { backend } })
+            .then(() => loadParakeetStatus())
+            .catch((err) =>
+              console.error("Failed to download parakeet backend:", err),
+            );
+        })
+        .catch((err) => console.error("Failed to save parakeet backend:", err));
+    },
+    [loadParakeetStatus, parakeetStatus],
+  );
+
   const deleteProvider = useCallback(
     async (provider: string) => {
       const client = getClient();
@@ -640,6 +673,7 @@ export function useModels(): UseModels {
       test: testLocalLlm,
       clearStatus: clearLocalStatus,
     },
+    loadData,
     configureModel,
     saveKey,
     selectLocalVoice,
@@ -650,6 +684,7 @@ export function useModels(): UseModels {
     selectLocalLlmModel,
     setCleanup,
     saveMlxKeepAliveMinutes,
+    saveParakeetBackend,
     deleteProvider,
   };
 }

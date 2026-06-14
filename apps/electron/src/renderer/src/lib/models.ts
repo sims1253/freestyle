@@ -69,6 +69,8 @@ export interface MlxAsrStatus {
   setupHint: string | null;
 }
 
+export type ParakeetBackend = "auto" | "cpu" | "vulkan" | "cuda" | "metal";
+
 export interface ParakeetStatus {
   binaryAvailable: boolean;
   binaryDownloading: boolean;
@@ -78,6 +80,16 @@ export interface ParakeetStatus {
   modelsDir: string;
   models: WhisperModelDownloadState[];
   modelDefinitions: WhisperModelDef[];
+  /** Stored user preference, or "auto" when unset. */
+  computeBackend: ParakeetBackend;
+  /** Backends selectable on this platform, led by "auto". */
+  availableBackends: ParakeetBackend[];
+  /** Platform default (e.g. "vulkan" on Win x64). */
+  platformDefaultBackend: string;
+  /** Backend recorded for the installed binary, or null if unknown. */
+  installedBackend: string | null;
+  /** Currently resolved backend used at runtime. */
+  activeBackend: string;
 }
 
 export const CLOUD_VOICE_PROVIDERS = [
@@ -102,6 +114,7 @@ export const LLM_PROVIDERS = [
   "groq",
   "mistral",
   "local-llm",
+  "zai",
 ];
 
 export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
@@ -114,6 +127,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   soniox: "Soniox",
   mistral: "Mistral",
   openrouter: "OpenRouter",
+  zai: "Z.AI",
   "local-llm": "Local LLM",
   "local-whisper": "Local Whisper",
   "local-mlx": "Local MLX",
@@ -130,6 +144,7 @@ export const PROVIDER_KEY_URLS: Record<string, string> = {
   anthropic: "https://console.anthropic.com/settings/keys",
   google: "https://aistudio.google.com/apikey",
   mistral: "https://console.mistral.ai/api-keys",
+  zai: "https://z.ai/manage-apikey/apikey-list",
 };
 
 export function displayProviderName(

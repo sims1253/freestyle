@@ -18,6 +18,7 @@ import { MlxWarmingDialog } from "./mlx-memory-section";
 import { ConfirmDialog, type ModalState, ModelModal } from "./model-modal";
 import { Eyebrow, PageHeader, PageShell } from "./page-chrome";
 import { PairCard } from "./pair-card";
+import { ParakeetBackendDialog } from "./parakeet-backend-section";
 import type { ApiKeyEntry, ConfiguredModel } from "./types";
 import { useModels } from "./use-models";
 import { displayName } from "./utils";
@@ -38,6 +39,7 @@ export default function ModelsPage(): React.JSX.Element {
     string | null
   >(null);
   const [warmingOpen, setWarmingOpen] = useState(false);
+  const [parakeetBackendOpen, setParakeetBackendOpen] = useState(false);
 
   // -------------------------------------------------------------------------
   // Modal flow
@@ -145,6 +147,12 @@ export default function ModelsPage(): React.JSX.Element {
     (!!m.mlxStatus?.platformSupported &&
       m.mlxStatus.models.some((model) => model.status === "ready"));
 
+  // Show the parakeet compute-backend picker when parakeet is the active
+  // voice engine and the platform offers more than one backend.
+  const showParakeetBackend =
+    m.defaultVoice?.provider === "local-parakeet" &&
+    (m.parakeetStatus?.availableBackends?.length ?? 0) > 1;
+
   return (
     <PageShell>
       <PageHeader title="Models" />
@@ -159,7 +167,14 @@ export default function ModelsPage(): React.JSX.Element {
           onConfigureWarming={
             showMlxWarming ? () => setWarmingOpen(true) : undefined
           }
+          onConfigureParakeet={
+            showParakeetBackend ? () => setParakeetBackendOpen(true) : undefined
+          }
         />
+
+        {m.llmCleanup && m.defaultLlm && (
+          <LlmTokenSettings llm={m.defaultLlm} onSaved={m.loadData} />
+        )}
 
         {m.llmCleanup && <CleanupPromptEditor />}
 
@@ -185,6 +200,14 @@ export default function ModelsPage(): React.JSX.Element {
           blockedReason={m.mlxStatus?.blockedReason ?? null}
           onChange={m.saveMlxKeepAliveMinutes}
           onClose={() => setWarmingOpen(false)}
+        />
+      )}
+
+      {parakeetBackendOpen && m.parakeetStatus && (
+        <ParakeetBackendDialog
+          status={m.parakeetStatus}
+          onChange={m.saveParakeetBackend}
+          onClose={() => setParakeetBackendOpen(false)}
         />
       )}
 
@@ -253,6 +276,126 @@ export default function ModelsPage(): React.JSX.Element {
   );
 }
 
+// ---------------------------------------------------------------------------
+// LlmTokenSettings â€” max output tokens + context length for the active LLM
+// ---------------------------------------------------------------------------
+
+function LlmTokenSettings({
+  llm,
+  onSaved,
+}: {
+  llm: ConfiguredModel;
+  onSaved: () => Promise<void>;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [maxTokens, setMaxTokens] = useState(
+    llm.max_output_tokens?.toString() ?? "",
+  );
+  const [contextLen, setContextLen] = useState(
+    llm.context_length?.toString() ?? "",
+  );
+  const timerRef = useState<{
+    current: ReturnType<typeof setTimeout> | null;
+  }>({ current: null })[0];
+
+  // Sync local state when the llm prop changes after reload
+  const llmMaxKey = `${llm.id}:${llm.max_output_tokens ?? ""}`;
+  const llmCtxKey = `${llm.id}:${llm.context_length ?? ""}`;
+  const lastSyncRef = useState<{ current: string }>({ current: "" })[0];
+  const syncKey = `${llmMaxKey}|${llmCtxKey}`;
+  if (lastSyncRef.current !== syncKey) {
+    lastSyncRef.current = syncKey;
+    setMaxTokens(llm.max_output_tokens?.toString() ?? "");
+    setContextLen(llm.context_length?.toString() ?? "");
+  }
+
+  const save = useCallback(
+    (field: "max_output_tokens" | "context_length", value: string) => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        const numValue = value.trim()
+          ? Number.parseInt(value.trim(), 10)
+          : null;
+        fetch(`${getApiBase()}/api/models/configured/${llm.id}/settings`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [field]: numValue }),
+        })
+          .then(() => onSaved())
+          .catch(() => {});
+      }, 600);
+    },
+    [llm.id, timerRef, onSaved],
+  );
+
+  return (
+    <section className="border-border bg-card rounded-[14px] border">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between px-6 py-4 cursor-pointer"
+      >
+        <div>
+          <Eyebrow text="Token budget" mono={false} />
+          <p className="text-muted-foreground mt-1 text-[13px]">
+            Max output tokens and context length for{" "}
+            <span className="text-foreground/80 font-medium">
+              {llm.model_name}
+            </span>
+          </p>
+        </div>
+        {open ? (
+          <ChevronUp className="text-muted-foreground h-4 w-4" />
+        ) : (
+          <ChevronDown className="text-muted-foreground h-4 w-4" />
+        )}
+      </button>
+      {open && (
+        <div className="border-border border-t px-6 pb-5 pt-4">
+          <div className="grid grid-cols-1 gap-4 min-[460px]:grid-cols-2">
+            <div>
+              <div className="mono text-muted-foreground mb-1.5 text-[10px] uppercase tracking-[0.16em]">
+                Max output tokens
+              </div>
+              <input
+                type="number"
+                value={maxTokens}
+                onChange={(e) => {
+                  setMaxTokens(e.target.value);
+                  save("max_output_tokens", e.target.value);
+                }}
+                placeholder="Auto (1.5x input + 256)"
+                className="border-border bg-background mono w-full rounded-[7px] border px-[11px] py-2 text-[13px] outline-none"
+              />
+              <p className="text-muted-foreground mt-1.5 text-[11px] leading-snug">
+                Leave empty for auto-scaling. When set, overrides LM Studio
+                defaults.
+              </p>
+            </div>
+            <div>
+              <div className="mono text-muted-foreground mb-1.5 text-[10px] uppercase tracking-[0.16em]">
+                Context length
+              </div>
+              <input
+                type="number"
+                value={contextLen}
+                onChange={(e) => {
+                  setContextLen(e.target.value);
+                  save("context_length", e.target.value);
+                }}
+                placeholder="No clamp"
+                className="border-border bg-background mono w-full rounded-[7px] border px-[11px] py-2 text-[13px] outline-none"
+              />
+              <p className="text-muted-foreground mt-1.5 text-[11px] leading-snug">
+                When set, max output tokens are clamped to this value.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
 // ---------------------------------------------------------------------------
 // CleanupPromptEditor — editable default post-processing system prompt
 // ---------------------------------------------------------------------------

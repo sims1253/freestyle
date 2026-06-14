@@ -1,12 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-  getBinaryName,
-  getBinDir,
-  getResourcesDir,
-  getServerBinaryName,
-} from "./constants.js";
+import { getBinaryName, getBinDir, getResourcesDir } from "./constants.js";
 
 const EXEC_CHECK =
   process.platform === "win32" ? constants.F_OK : constants.X_OK;
@@ -83,16 +78,25 @@ export const WIN_DLL_NOT_FOUND_MESSAGE =
   "and ensure CUDA runtime DLLs are present next to parakeet-cli.exe " +
   "(re-run the download script to fetch them).";
 
-export function parakeetSpawnEnv(binaryPath: string): {
+export function parakeetSpawnEnv(
+  binaryPath: string,
+  device?: string,
+): {
   cwd: string;
   env: NodeJS.ProcessEnv;
 } {
   const binDir = dirname(binaryPath);
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${binDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
+  };
+  // Force a specific ggml device, e.g. "cpu" to bypass the GPU backend.
+  // When omitted, parakeet auto-selects the compiled-in GPU backend.
+  if (device) {
+    env.PARAKEET_DEVICE = device;
+  }
   return {
     cwd: binDir,
-    env: {
-      ...process.env,
-      PATH: `${binDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
-    },
+    env,
   };
 }

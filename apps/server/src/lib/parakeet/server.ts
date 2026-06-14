@@ -1,9 +1,16 @@
-import { type ChildProcess, execFile } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createWriteStream, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createAppLogger } from "@freestyle/utils";
+import { getDb } from "../db.js";
+import {
+  getDeviceOverride,
+  type ParakeetBackend,
+  type ResolvedBackend,
+  resolveBackend,
+} from "./backends.js";
 import {
   findParakeetBinary,
   parakeetSpawnEnv,
@@ -30,6 +37,26 @@ export interface ParakeetTranscribeResult {
   text: string;
 }
 
+/**
+ * Read the stored parakeet compute backend preference from the settings table.
+ * Returns `null` when unset (callers should treat that as `"auto"`).
+ */
+export function readParakeetBackendSetting(): ParakeetBackend | null {
+  try {
+    const row = getDb()
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get("parakeet_compute_backend") as { value: string } | undefined;
+    return (row?.value as ParakeetBackend) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve the current user preference to a concrete backend. */
+export function getCurrentBackend(): ResolvedBackend {
+  return resolveBackend(readParakeetBackendSetting());
+}
+
 export async function transcribeViaCli(
   opts: ParakeetTranscribeOptions,
 ): Promise<ParakeetTranscribeResult> {
@@ -46,7 +73,7 @@ export async function transcribeViaCli(
   // Write audio to a temp file (parakeet-cli reads from a path)
   const tempDir = mkdtempSync(join(tmpdir(), "parakeet-"));
   const audioPath = join(tempDir, "audio.wav");
-  const videoStream = await import("node:fs").then(() => undefined);
+  const _videoStream = await import("node:fs").then(() => undefined);
   await new Promise<void>((resolve, reject) => {
     const ws = createWriteStream(audioPath);
     ws.on("finish", () => resolve());
@@ -68,12 +95,16 @@ export async function transcribeViaCli(
       args.push("--lang", opts.language);
     }
 
-    log.debug(`invoking parakeet-cli with model ${opts.model}`);
+    // Force the device only when the user picked CPU; GPU backends auto-select.
+    const device = getDeviceOverride(getCurrentBackend());
+    log.debug(
+      `invoking parakeet-cli with model ${opts.model}${device ? ` (device=${device})` : ""}`,
+    );
 
     const { stdout } = await execFileAsync(binary, args, {
       timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
-      ...parakeetSpawnEnv(binary),
+      ...parakeetSpawnEnv(binary, device),
     });
 
     const data = JSON.parse(stdout) as { text?: string };

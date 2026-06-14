@@ -160,6 +160,20 @@ async function validateMistral(apiKey: string): Promise<ValidationResult> {
   return { valid: false, error: `Mistral returned HTTP ${res.status}.` };
 }
 
+async function validateZai(apiKey: string): Promise<ValidationResult> {
+  const res = await fetch("https://api.z.ai/api/coding/paas/v4/models", {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (res.ok) return { valid: true };
+  if (res.status === 401)
+    return {
+      valid: false,
+      error: "Invalid API key. Please check and try again.",
+    };
+  return { valid: false, error: `Z.AI returned HTTP ${res.status}.` };
+}
+
 // ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
@@ -176,6 +190,7 @@ const LIVE_VALIDATORS: Record<
   google: validateGoogle,
   mistral: validateMistral,
   soniox: validateSoniox,
+  zai: validateZai,
 };
 
 export async function validateApiKey(
