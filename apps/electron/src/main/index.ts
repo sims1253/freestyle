@@ -48,6 +48,7 @@ import server, {
   activateManagedMlxRuntimeForAppVersion,
   autoStartParakeetServer,
   autoStartWhisperServer,
+  cleanupOldAudioFiles,
   closeDb,
   prefetchManagedMlxRuntimeForAppRelease,
   reconcileUnsupportedMlxVoiceDefault,
@@ -1145,6 +1146,10 @@ app.whenReady().then(async () => {
   // IPC: expose the server port to the renderer
   ipcMain.handle("server:port", () => serverPort);
 
+  ipcMain.handle("shell:open-path", (_event, path: string) =>
+    shell.openPath(path),
+  );
+
   ipcMain.handle(
     "dialog:show-error",
     async (_event, title: string, detail: string) => {
@@ -1285,6 +1290,21 @@ app.whenReady().then(async () => {
   reconcileUnsupportedMlxVoiceDefault();
   autoStartWhisperServer();
   autoStartParakeetServer();
+
+  // Clean up old audio backups on startup and every 6 hours
+  try {
+    cleanupOldAudioFiles();
+  } catch (err) {
+    log.error(`Audio backup cleanup failed: ${err}`);
+  }
+  setInterval(
+    () => {
+      try {
+        cleanupOldAudioFiles();
+      } catch {}
+    },
+    6 * 60 * 60 * 1000,
+  );
 
   // Start the Hono HTTP server with WebSocket support (or reuse an existing one)
   function startServer(port: number): void {

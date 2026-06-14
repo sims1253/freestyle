@@ -94,6 +94,22 @@ export function prewarmPostProcess(): void {
 
   if (llm.provider === "groq") {
     void prewarmGroqConnection(normalizeGroqModelId(llm.model_id));
+  } else if (llm.provider === "local-llm") {
+    void prewarmLocalLlm(llm.model_id);
+  }
+}
+
+async function prewarmLocalLlm(modelId: string): Promise<void> {
+  try {
+    const model = createChatModel("local-llm", modelId);
+    await generateText({
+      model,
+      prompt: "hi",
+      maxOutputTokens: 1,
+      temperature: 0,
+    });
+  } catch {
+    // ignore — best effort
   }
 }
 
@@ -144,10 +160,20 @@ export async function postProcess(
       );
     } else {
       const rewriteContext = getRewritePromptContext(appContext, db);
+      let customSystemPrompt: string | undefined;
+      try {
+        const promptRow = db
+          .prepare(
+            "SELECT value FROM settings WHERE key = 'rewrite_system_prompt'",
+          )
+          .get() as { value: string } | undefined;
+        if (promptRow?.value) customSystemPrompt = promptRow.value;
+      } catch {}
       const { system, prompt } = buildRewritePrompt(normalizedRawText, {
         contextHint: rewriteContext.contextHint || undefined,
         language: options.language,
         registerMode: rewriteContext.registerMode,
+        customSystemPrompt,
       });
 
       handoffMs = Date.now() - handoffStart;

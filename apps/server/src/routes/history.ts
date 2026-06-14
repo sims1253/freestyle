@@ -1,6 +1,18 @@
+import { readFileSync } from "node:fs";
+import { createAppLogger } from "@freestyle/utils";
 import { Hono } from "hono";
+import { deleteAudioFile, getAudioBackupDir } from "../lib/audio-backup.js";
 import { getDb } from "../lib/db.js";
+import { sanitizeTranscriptText } from "../lib/editor/model-hints.js";
+import { getLanguageSetting } from "../lib/language.js";
+import { postProcess } from "../lib/post-process.js";
 import { capture } from "../lib/posthog.js";
+import { getDefaultModels } from "../lib/providers.js";
+import { getProvider } from "../lib/streaming/registry.js";
+import { getApiKeyForProvider } from "../lib/streaming-stt.js";
+import { resolveAsrVocabularyBias } from "../lib/vocabulary-bias.js";
+
+const log = createAppLogger("history");
 
 interface HistoryRow {
   id: number;
@@ -16,6 +28,7 @@ interface HistoryRow {
   output_tokens: number;
   cost_usd: number;
   created_at: string;
+  audio_file_path: string | null;
 }
 
 const ALLOWED_ORDER_COLUMNS = new Set([
@@ -167,6 +180,13 @@ const history = new Hono()
       unfiltered_total_sessions: unfilteredCount.count,
     });
   })
+  .get("/audio-backup-dir", (c) => {
+    try {
+      return c.json({ path: getAudioBackupDir() });
+    } catch {
+      return c.json({ path: null });
+    }
+  })
   .get("/:id", (c) => {
     const db = getDb();
     const id = Number(c.req.param("id"));
@@ -180,17 +200,124 @@ const history = new Hono()
   .delete("/:id", (c) => {
     const db = getDb();
     const id = Number(c.req.param("id"));
+    const row = db
+      .prepare("SELECT audio_file_path FROM transcription_history WHERE id = ?")
+      .get(id) as { audio_file_path: string | null } | undefined;
+    if (row?.audio_file_path) deleteAudioFile(row.audio_file_path);
     db.prepare("DELETE FROM transcription_history WHERE id = ?").run(id);
     return c.json({ ok: true });
   })
   .delete("/", (c) => {
     const db = getDb();
+    const rows = db
+      .prepare(
+        "SELECT audio_file_path FROM transcription_history WHERE audio_file_path IS NOT NULL",
+      )
+      .all() as Array<{ audio_file_path: string }>;
+    for (const row of rows) deleteAudioFile(row.audio_file_path);
     const countRow = db
       .prepare("SELECT COUNT(*) as count FROM transcription_history")
       .get() as { count: number };
     db.exec("DELETE FROM transcription_history");
     capture("history cleared", { deleted_count: countRow.count });
     return c.json({ ok: true });
+  })
+  .post("/:id/reprocess", async (c) => {
+    const db = getDb();
+    const id = Number(c.req.param("id"));
+    const row = db
+      .prepare("SELECT * FROM transcription_history WHERE id = ?")
+      .get(id) as HistoryRow | undefined;
+
+    if (!row) return c.json({ error: "Not found" }, 404);
+    if (!row.audio_file_path) {
+      return c.json({ error: "No audio backup available for this entry" }, 400);
+    }
+
+    let audioData: Uint8Array;
+    try {
+      audioData = new Uint8Array(readFileSync(row.audio_file_path));
+    } catch {
+      return c.json({ error: "Audio file not found on disk" }, 404);
+    }
+
+    const defaults = getDefaultModels();
+    if (!defaults.voice) {
+      return c.json({ error: "No voice model configured" }, 400);
+    }
+
+    const provider = getProvider(defaults.voice.provider);
+    if (!provider) {
+      return c.json(
+        { error: `Unsupported provider: ${defaults.voice.provider}` },
+        400,
+      );
+    }
+
+    const apiKey = getApiKeyForProvider(defaults.voice.provider);
+    if (!apiKey) {
+      return c.json(
+        { error: `No API key for provider: ${defaults.voice.provider}` },
+        400,
+      );
+    }
+
+    try {
+      const language = getLanguageSetting();
+      const bias = resolveAsrVocabularyBias(
+        defaults.voice.provider,
+        defaults.voice.model_id,
+      );
+
+      const result = await provider.transcribe({
+        audio: audioData,
+        model: defaults.voice.model_id,
+        apiKey,
+        ...(language ? { language } : {}),
+        bias,
+      });
+
+      const rawText = sanitizeTranscriptText(result.text);
+      const pp = await postProcess(rawText, null, {
+        language,
+        source: "batch",
+      });
+
+      db.prepare(
+        `UPDATE transcription_history SET
+           raw_text = ?, cleaned_text = ?,
+           voice_provider = ?, voice_model = ?,
+           llm_provider = ?, llm_model = ?,
+           input_tokens = ?, output_tokens = ?, cost_usd = ?
+         WHERE id = ?`,
+      ).run(
+        rawText,
+        pp.cleaned !== rawText ? pp.cleaned : null,
+        defaults.voice.provider,
+        defaults.voice.model_id,
+        pp.llmProvider,
+        pp.llmModel,
+        pp.inputTokens,
+        pp.outputTokens,
+        pp.costUsd,
+        id,
+      );
+
+      return c.json({
+        raw: rawText,
+        cleaned: pp.cleaned,
+        model: defaults.voice.model_id,
+      });
+    } catch (err) {
+      log.error(`Reprocess failed for entry ${id}: ${err}`);
+      return c.json(
+        {
+          error: "Reprocessing failed",
+          detail: err instanceof Error ? err.message : String(err),
+        },
+        500,
+      );
+    }
   });
 
 export default history;

@@ -83,6 +83,7 @@ const app = new Hono()
   .route("/mcp", mcp)
   .route("/stream", stream);
 
+export { cleanupOldAudioFiles } from "./lib/audio-backup.js";
 export { closeDb } from "./lib/db.js";
 export { stopMlxServer } from "./lib/mlx-asr/server.js";
 export { stopServer as stopParakeetServer } from "./lib/parakeet/server.js";

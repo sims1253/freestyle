@@ -177,6 +177,8 @@ const api = {
   },
   // Audio level stream — pill broadcasts per-frame mic amplitude (0..1) so
   // other windows (the Today tutorial demo) can render a live waveform.
+  openPath: (path: string): Promise<string> =>
+    ipcRenderer.invoke("shell:open-path", path),
   sendAudioLevel: (level: number): void =>
     ipcRenderer.send("audio:level", level),
   onAudioLevel: (callback: (level: number) => void): (() => void) => {

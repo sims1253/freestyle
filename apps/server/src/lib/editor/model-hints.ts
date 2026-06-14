@@ -31,8 +31,15 @@ function stripTrailingFinTags(text: string): string {
   return text.replace(/(?:\s*<\/?fin>\s*)+$/gi, "").trim();
 }
 
+function stripLanguageTags(text: string): string {
+  // Only strip language tags with a region/script subtag (e.g. <en-US>, <zh-Hans>)
+  // to avoid false positives on short words in angle brackets.
+  return text.replace(/<\/?[a-z]{2}-[A-Za-z]{2,4}>/g, "").trim();
+}
+
 export function sanitizeTranscriptText(text: string): string {
   let cleaned = stripWrappingQuotes(text);
   cleaned = stripTrailingFinTags(cleaned);
+  cleaned = stripLanguageTags(cleaned);
   return stripTrailingDuplicate(cleaned);
 }

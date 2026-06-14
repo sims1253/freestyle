@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 const DEFAULT_FORMAT_RULES = [
   {
@@ -271,6 +271,16 @@ export function initSchema(db: DatabaseSync): void {
         legacy.label,
         legacy.instructions,
       );
+    }
+  }
+
+  if (currentVersion < 9) {
+    try {
+      db.exec(
+        "ALTER TABLE transcription_history ADD COLUMN audio_file_path TEXT",
+      );
+    } catch {
+      // Column may already exist
     }
   }
 

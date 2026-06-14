@@ -1,5 +1,8 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { createAppLogger } from "@freestyle/utils";
 import { Hono } from "hono";
+import { getAudioBackupDir } from "../lib/audio-backup.js";
 import { getDb } from "../lib/db.js";
 import { sanitizeTranscriptText } from "../lib/editor/model-hints.js";
 import { getLanguageSetting } from "../lib/language.js";
@@ -23,6 +26,24 @@ function decodeAppContext(raw: string | undefined): string | null {
     return decodeURIComponent(raw);
   } catch {
     return raw;
+  }
+}
+
+function saveAudioBackup(
+  db: ReturnType<typeof getDb>,
+  audioData: Uint8Array,
+  rowId: number | bigint,
+): void {
+  try {
+    const dir = getAudioBackupDir();
+    const id = Number(rowId);
+    const audioPath = join(dir, `${id}.wav`);
+    writeFileSync(audioPath, audioData);
+    db.prepare(
+      "UPDATE transcription_history SET audio_file_path = ? WHERE id = ?",
+    ).run(audioPath, id);
+  } catch (err) {
+    log.error(`Failed to save audio backup: ${err}`);
   }
 }
 
@@ -146,11 +167,14 @@ const transcribeRoute = new Hono().post("/", async (c) => {
 
   if (skipPostProcess) {
     try {
-      db.prepare(
-        `INSERT INTO transcription_history
+      const result = db
+        .prepare(
+          `INSERT INTO transcription_history
            (raw_text, voice_provider, voice_model, duration_ms, audio_duration_ms)
            VALUES (?, ?, ?, ?, ?)`,
-      ).run(rawText, voiceProvider, voiceModel, durationMs, audioDurationMs);
+        )
+        .run(rawText, voiceProvider, voiceModel, durationMs, audioDurationMs);
+      saveAudioBackup(db, audioData, result.lastInsertRowid);
     } catch (err) {
       log.error(`Failed to save history: ${err}`);
     }
@@ -181,23 +205,26 @@ const transcribeRoute = new Hono().post("/", async (c) => {
   );
 
   try {
-    db.prepare(
-      `INSERT INTO transcription_history
+    const result = db
+      .prepare(
+        `INSERT INTO transcription_history
          (raw_text, cleaned_text, voice_provider, voice_model, llm_provider, llm_model, duration_ms, audio_duration_ms, input_tokens, output_tokens, cost_usd)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      rawText,
-      pp.cleaned !== rawText ? pp.cleaned : null,
-      voiceProvider,
-      voiceModel,
-      pp.llmProvider,
-      pp.llmModel,
-      Date.now() - start,
-      audioDurationMs,
-      pp.inputTokens,
-      pp.outputTokens,
-      pp.costUsd,
-    );
+      )
+      .run(
+        rawText,
+        pp.cleaned !== rawText ? pp.cleaned : null,
+        voiceProvider,
+        voiceModel,
+        pp.llmProvider,
+        pp.llmModel,
+        Date.now() - start,
+        audioDurationMs,
+        pp.inputTokens,
+        pp.outputTokens,
+        pp.costUsd,
+      );
+    saveAudioBackup(db, audioData, result.lastInsertRowid);
   } catch (err) {
     log.error(`Failed to save history: ${err}`);
   }

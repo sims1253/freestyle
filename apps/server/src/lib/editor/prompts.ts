@@ -187,8 +187,11 @@ export function buildRewritePrompt(
     contextHint?: string;
     language?: string;
     registerMode?: RewriteRegisterMode;
+    customSystemPrompt?: string;
   },
 ): { system: string; prompt: string } {
+  const baseSystem =
+    options?.customSystemPrompt?.trim() || UNIFIED_REWRITE_SYSTEM;
   const contextHint = options?.contextHint?.trim()
     ? sanitizeContextHint(options.contextHint.trim())
     : "";
@@ -199,8 +202,9 @@ export function buildRewritePrompt(
   const languageBlock = buildLanguageBlock(options?.language);
 
   return {
-    system:
-      UNIFIED_REWRITE_SYSTEM + languageBlock + contextBlock + registerBlock,
+    system: baseSystem + languageBlock + contextBlock + registerBlock,
     prompt: `<transcript>\n${inputText}\n</transcript>`,
   };
 }
+
+export { UNIFIED_REWRITE_SYSTEM as DEFAULT_REWRITE_SYSTEM };

@@ -1,29 +1,34 @@
 import { Hono } from "hono";
+import { DEFAULT_REWRITE_SYSTEM } from "../lib/editor/prompts.js";
 import { getLanguageSetting } from "../lib/language.js";
 import { postProcess } from "../lib/post-process.js";
 
-const postProcessRoute = new Hono().post("/", async (c) => {
-  const body = await c.req.json().catch(() => null);
+const postProcessRoute = new Hono()
+  .get("/default-prompt", (c) => {
+    return c.json({ prompt: DEFAULT_REWRITE_SYSTEM });
+  })
+  .post("/", async (c) => {
+    const body = await c.req.json().catch(() => null);
 
-  if (!body || typeof body.text !== "string" || !body.text.trim()) {
-    return c.json({ error: "text field is required" }, 400);
-  }
+    if (!body || typeof body.text !== "string" || !body.text.trim()) {
+      return c.json({ error: "text field is required" }, 400);
+    }
 
-  const appContext: string | null = body.appContext ?? null;
-  const language =
-    typeof body.language === "string" ? body.language : getLanguageSetting();
+    const appContext: string | null = body.appContext ?? null;
+    const language =
+      typeof body.language === "string" ? body.language : getLanguageSetting();
 
-  const pp = await postProcess(body.text, appContext, {
-    language,
-    source: "multi_segment",
+    const pp = await postProcess(body.text, appContext, {
+      language,
+      source: "multi_segment",
+    });
+
+    return c.json({
+      cleaned: pp.cleaned,
+      inputTokens: pp.inputTokens,
+      outputTokens: pp.outputTokens,
+      costUsd: pp.costUsd,
+    });
   });
-
-  return c.json({
-    cleaned: pp.cleaned,
-    inputTokens: pp.inputTokens,
-    outputTokens: pp.outputTokens,
-    costUsd: pp.costUsd,
-  });
-});
 
 export default postProcessRoute;

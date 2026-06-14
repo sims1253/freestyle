@@ -8,12 +8,16 @@ import { getClient } from "@renderer/lib/api";
 import { cn, ON_DEVICE_PHRASE } from "@renderer/lib/utils";
 import {
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Clock,
   Copy,
   Filter,
+  Loader2,
   Redo2,
+  RefreshCw,
   Search,
   Trash2,
   Undo2,
@@ -34,6 +38,7 @@ interface HistoryEntry {
   output_tokens: number;
   cost_usd: number;
   created_at: string;
+  audio_file_path: string | null;
 }
 
 interface Stats {
@@ -212,6 +217,27 @@ export default function HistoryPage(): React.JSX.Element {
     [loadData],
   );
 
+  const reprocessEntry = useCallback(async (id: number) => {
+    const res = await fetch(
+      `${getClient().api.history.$url().href}/${id}/reprocess`,
+      { method: "POST" },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as {
+        raw: string;
+        cleaned: string;
+        model: string;
+      };
+      setEntries((prev) =>
+        prev.map((e) =>
+          e.id === id
+            ? { ...e, raw_text: data.raw, cleaned_text: data.cleaned }
+            : e,
+        ),
+      );
+    }
+  }, []);
+
   // Group entries by day for the feed.
   const groups = useMemo(() => {
     const out: { label: string; items: HistoryEntry[] }[] = [];
@@ -230,7 +256,7 @@ export default function HistoryPage(): React.JSX.Element {
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-muted-foreground text-sm">Loading history…</p>
+        <p className="text-muted-foreground text-sm">Loading history...</p>
       </div>
     );
   }
@@ -289,7 +315,7 @@ export default function HistoryPage(): React.JSX.Element {
                     setSearch(e.target.value);
                     setPage(0);
                   }}
-                  placeholder={`Search ${total} transcript${total === 1 ? "" : "s"}…`}
+                  placeholder={`Search ${total} transcript${total === 1 ? "" : "s"}...`}
                   className="placeholder:text-muted-foreground/80 text-foreground flex-1 bg-transparent text-[13px] outline-none"
                 />
                 <span className="mono text-muted-foreground text-[10px]">
@@ -335,6 +361,7 @@ export default function HistoryPage(): React.JSX.Element {
                         key={entry.id}
                         entry={entry}
                         onDelete={deleteEntry}
+                        onReprocess={reprocessEntry}
                       />
                     ))}
                   </FeedGroup>
@@ -602,14 +629,20 @@ function FeedGroup({
   );
 }
 
+const COLLAPSE_THRESHOLD = 150;
+
 function FeedItem({
   entry,
   onDelete,
+  onReprocess,
 }: {
   entry: HistoryEntry;
   onDelete: (id: number) => void;
+  onReprocess: (id: number) => Promise<void>;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
+  const [isReprocessing, setIsReprocessing] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const hasAiEdit =
     !!entry.cleaned_text && entry.cleaned_text.trim() !== entry.raw_text.trim();
   const [showAiEdit, setShowAiEdit] = useState(hasAiEdit);
@@ -619,11 +652,26 @@ function FeedItem({
   const llm = shortModel(entry.llm_model);
   const modelLabel = llm ? `${voice} · ${llm}` : voice;
 
+  const isLong = text.length > COLLAPSE_THRESHOLD || text.includes("\n");
+  const displayText =
+    !isExpanded && isLong
+      ? `${text.slice(0, COLLAPSE_THRESHOLD).trimEnd()}...`
+      : text;
+
   const copyText = useCallback(async () => {
     await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }, [text]);
+
+  const handleReprocess = useCallback(async () => {
+    setIsReprocessing(true);
+    try {
+      await onReprocess(entry.id);
+    } finally {
+      setIsReprocessing(false);
+    }
+  }, [entry.id, onReprocess]);
 
   return (
     <div className="group px-1.5 py-3.5">
@@ -645,6 +693,21 @@ function FeedItem({
           </span>
         )}
         <div className="ml-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          {entry.audio_file_path && (
+            <button
+              type="button"
+              onClick={handleReprocess}
+              disabled={isReprocessing}
+              className="text-muted-foreground hover:text-foreground cursor-pointer rounded p-1 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Reprocess transcription"
+            >
+              {isReprocessing ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <RefreshCw size={13} />
+              )}
+            </button>
+          )}
           {hasAiEdit && (
             <button
               type="button"
@@ -677,12 +740,22 @@ function FeedItem({
           </button>
         </div>
       </div>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: toggle is decorative */}
       <p
-        className="text-foreground m-0 text-[16px] leading-[1.55]"
+        className={cn(
+          "text-foreground m-0 text-[16px] leading-[1.55]",
+          isLong && "cursor-pointer",
+        )}
         style={{ textWrap: "pretty" as never }}
         dir="auto"
+        onClick={isLong ? () => setIsExpanded((v) => !v) : undefined}
       >
-        “{text}”
+        "{displayText}"
+        {isLong && (
+          <span className="text-muted-foreground ml-1 inline-flex align-middle">
+            {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </span>
+        )}
       </p>
     </div>
   );

@@ -5,7 +5,7 @@ import {
   keyDisplayLabel,
   useHotkeyRecorder,
 } from "@renderer/hooks/use-hotkey-recorder";
-import { getClient } from "@renderer/lib/api";
+import { getApiBase, getClient } from "@renderer/lib/api";
 import { LANGUAGES } from "@renderer/lib/languages";
 import { requestMicAccess, resolveMicStatus } from "@renderer/lib/permissions";
 import { cn } from "@renderer/lib/utils";
@@ -70,6 +70,7 @@ export default function SettingsPage(): React.JSX.Element {
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [launchAtStartup, setLaunchAtStartup] = useState(false);
   const [showOnLaunch, setShowOnLaunch] = useState(true);
+  const [audioRetentionDays, setAudioRetentionDays] = useState(7);
 
   // Permissions
   type MicStatus =
@@ -246,6 +247,13 @@ export default function SettingsPage(): React.JSX.Element {
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data?.value === "false") setSoundEnabled(false);
+      })
+      .catch(() => {});
+    getClient()
+      .api.settings[":key"].$get({ param: { key: "audio_retention_days" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.value) setAudioRetentionDays(Number(data.value) || 7);
       })
       .catch(() => {});
     getClient()
@@ -775,6 +783,46 @@ export default function SettingsPage(): React.JSX.Element {
         </Section>
 
         <Section label="Data" tight>
+          <Row
+            label="Audio backup retention"
+            desc="Recorded audio is saved alongside transcriptions for reprocessing. Set how long to keep audio files before automatic cleanup."
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={audioRetentionDays}
+                onChange={(e) => {
+                  const val = Math.max(
+                    1,
+                    Math.min(365, Number(e.target.value) || 7),
+                  );
+                  setAudioRetentionDays(val);
+                  getClient().api.settings[":key"].$put({
+                    param: { key: "audio_retention_days" },
+                    json: { value: String(val) },
+                  });
+                }}
+                className="border-border bg-card text-foreground w-16 rounded-md border px-2 py-1.5 text-center text-xs outline-none focus:border-primary"
+              />
+              <span className="text-muted-foreground text-xs">days</span>
+              <button
+                type="button"
+                onClick={() => {
+                  fetch(`${getApiBase()}/api/history/audio-backup-dir`)
+                    .then((r) => r.json())
+                    .then((data: { path: string | null }) => {
+                      if (data.path) window.api.openPath(data.path);
+                    })
+                    .catch(() => {});
+                }}
+                className="text-muted-foreground hover:text-foreground ml-1 text-xs underline cursor-pointer"
+              >
+                Open folder
+              </button>
+            </div>
+          </Row>
           <Row
             label="Transcription history"
             desc="Permanently delete every saved session — this can't be undone."

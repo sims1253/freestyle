@@ -1,14 +1,18 @@
+import { getApiBase, getClient } from "@renderer/lib/api";
 import type { AvailableModel } from "@renderer/lib/models";
 import { cn, ON_DEVICE_PHRASE } from "@renderer/lib/utils";
 import {
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
   Key,
   Laptop,
   Pencil,
+  RotateCcw,
   Trash2,
   XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { MlxWarmingDialog } from "./mlx-memory-section";
 import { ConfirmDialog, type ModalState, ModelModal } from "./model-modal";
@@ -157,6 +161,8 @@ export default function ModelsPage(): React.JSX.Element {
           }
         />
 
+        {m.llmCleanup && <CleanupPromptEditor />}
+
         <KeysSection
           apiKeys={m.apiKeys}
           configured={m.configured}
@@ -244,6 +250,122 @@ export default function ModelsPage(): React.JSX.Element {
         />
       )}
     </PageShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CleanupPromptEditor — editable default post-processing system prompt
+// ---------------------------------------------------------------------------
+
+function CleanupPromptEditor(): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState<string | null>(null);
+  const [defaultPrompt, setDefaultPrompt] = useState<string | null>(null);
+  const saveTimeoutRef = {
+    current: null as ReturnType<typeof setTimeout> | null,
+  };
+
+  const loadPrompt = useCallback(async () => {
+    if (value !== null) return; // already loaded
+    const client = getClient();
+    const [customRes, defaultRes] = await Promise.all([
+      client.api.settings[":key"].$get({
+        param: { key: "rewrite_system_prompt" },
+      }),
+      fetch(`${getApiBase()}/api/post-process/default-prompt`),
+    ]);
+    const custom = customRes.ok
+      ? (((await customRes.json()) as { value?: string }).value ?? "")
+      : "";
+    let defText = "";
+    if (defaultRes.ok) {
+      const data = (await defaultRes.json()) as { prompt: string };
+      defText = data.prompt;
+      setDefaultPrompt(defText);
+    }
+    setValue(custom || defText);
+  }, [value]);
+
+  const handleToggle = useCallback(() => {
+    const next = !open;
+    setOpen(next);
+    if (next) void loadPrompt();
+  }, [open, loadPrompt]);
+
+  const handleChange = useCallback(
+    (newValue: string) => {
+      setValue(newValue);
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      const saveValue = newValue === defaultPrompt ? "" : newValue;
+      saveTimeoutRef.current = setTimeout(() => {
+        getClient()
+          .api.settings[":key"].$put({
+            param: { key: "rewrite_system_prompt" },
+            json: { value: saveValue },
+          })
+          .catch(() => {});
+      }, 600);
+    },
+    [defaultPrompt],
+  );
+
+  const handleReset = useCallback(() => {
+    setValue(defaultPrompt ?? "");
+    getClient()
+      .api.settings[":key"].$put({
+        param: { key: "rewrite_system_prompt" },
+        json: { value: "" },
+      })
+      .catch(() => {});
+  }, [defaultPrompt]);
+
+  return (
+    <section className="border-border bg-card rounded-[14px] border">
+      <button
+        type="button"
+        onClick={handleToggle}
+        className="flex w-full items-center justify-between px-6 py-4 cursor-pointer"
+      >
+        <div>
+          <Eyebrow text="Cleanup system prompt" mono={false} />
+          <p className="text-muted-foreground mt-1 text-[13px]">
+            Customize the instructions sent to the LLM for transcript cleanup
+          </p>
+        </div>
+        {open ? (
+          <ChevronUp className="text-muted-foreground h-4 w-4" />
+        ) : (
+          <ChevronDown className="text-muted-foreground h-4 w-4" />
+        )}
+      </button>
+      {open && (
+        <div className="border-border border-t px-6 pb-5 pt-4">
+          <textarea
+            value={value ?? ""}
+            onChange={(e) => handleChange(e.target.value)}
+            rows={12}
+            className="border-border bg-background text-foreground w-full rounded-md border p-3 text-[13px] leading-relaxed outline-none focus:border-primary resize-y font-mono"
+          />
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-muted-foreground text-[11px]">
+              {value && defaultPrompt && value !== defaultPrompt
+                ? "Using custom prompt"
+                : "Using default prompt"}
+            </p>
+            {value && defaultPrompt && value !== defaultPrompt && (
+              <button
+                type="button"
+                onClick={handleReset}
+                className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-[11px] cursor-pointer"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Reset to default
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

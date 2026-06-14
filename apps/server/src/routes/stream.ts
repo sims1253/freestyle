@@ -1,6 +1,7 @@
 import { createAppLogger } from "@freestyle/utils";
 import { upgradeWebSocket } from "@hono/node-server";
 import { Hono } from "hono";
+import { AudioWriter } from "../lib/audio-backup.js";
 import { getDb } from "../lib/db.js";
 import { sanitizeTranscriptText } from "../lib/editor/model-hints.js";
 import { getLanguageSetting } from "../lib/language.js";
@@ -42,6 +43,7 @@ const stream = new Hono().get(
     let reconnectAttempts = 0;
     let readyToken = 0;
     let notifiedReadyToken = 0;
+    let audioWriter: AudioWriter | null = null;
     const MAX_RECONNECT_ATTEMPTS = 3;
     const MAX_PENDING_AUDIO_CHUNKS = 500;
     type ResolvedStreamConfig = NonNullable<
@@ -108,9 +110,6 @@ const stream = new Hono().get(
       if (token !== readyToken || notifiedReadyToken === token) return;
       notifiedReadyToken = token;
       flushPendingAudio();
-      if (voiceDefaults?.provider === "soniox") {
-        prewarmPostProcess();
-      }
       ws.send(JSON.stringify({ type: "session.ready", model }));
       if (pendingCommit) {
         pendingCommit = false;
@@ -243,6 +242,8 @@ const stream = new Hono().get(
 
             if (!rawText?.trim()) {
               ws.send(JSON.stringify({ type: "final", text: "" }));
+              if (audioWriter) audioWriter.abort();
+              audioWriter = null;
               return;
             }
 
@@ -288,25 +289,42 @@ const stream = new Hono().get(
                 }
                 try {
                   const db = getDb();
-                  db.prepare(
-                    `INSERT INTO transcription_history
+                  const result = db
+                    .prepare(
+                      `INSERT INTO transcription_history
                        (raw_text, cleaned_text, voice_provider, voice_model, llm_provider, llm_model, duration_ms, audio_duration_ms, input_tokens, output_tokens, cost_usd)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                  ).run(
-                    rawText,
-                    pp.cleaned !== rawText ? pp.cleaned : null,
-                    voiceDefaults!.provider,
-                    voiceDefaults!.model_id,
-                    pp.llmProvider,
-                    pp.llmModel,
-                    durationMs,
-                    audioDurationMs,
-                    pp.inputTokens,
-                    pp.outputTokens,
-                    pp.costUsd,
-                  );
+                    )
+                    .run(
+                      rawText,
+                      pp.cleaned !== rawText ? pp.cleaned : null,
+                      voiceDefaults!.provider,
+                      voiceDefaults!.model_id,
+                      pp.llmProvider,
+                      pp.llmModel,
+                      durationMs,
+                      audioDurationMs,
+                      pp.inputTokens,
+                      pp.outputTokens,
+                      pp.costUsd,
+                    );
+                  if (audioWriter) {
+                    try {
+                      const audioPath = audioWriter.finalize(
+                        result.lastInsertRowid,
+                      );
+                      audioWriter = null;
+                      db.prepare(
+                        "UPDATE transcription_history SET audio_file_path = ? WHERE id = ?",
+                      ).run(audioPath, Number(result.lastInsertRowid));
+                    } catch (err) {
+                      log.error(`Failed to finalize audio backup: ${err}`);
+                    }
+                  }
                 } catch (err) {
                   log.error(`Failed to save history: ${err}`);
+                  if (audioWriter) audioWriter.abort();
+                  audioWriter = null;
                 }
               })
               .catch((err) => {
@@ -316,18 +334,34 @@ const stream = new Hono().get(
                 }
                 try {
                   const db = getDb();
-                  db.prepare(
-                    `INSERT INTO transcription_history
+                  const result = db
+                    .prepare(
+                      `INSERT INTO transcription_history
                        (raw_text, voice_provider, voice_model, duration_ms, audio_duration_ms)
                        VALUES (?, ?, ?, ?, ?)`,
-                  ).run(
-                    rawText,
-                    voiceDefaults!.provider,
-                    voiceDefaults!.model_id,
-                    durationMs,
-                    audioDurationMs,
-                  );
-                } catch {}
+                    )
+                    .run(
+                      rawText,
+                      voiceDefaults!.provider,
+                      voiceDefaults!.model_id,
+                      durationMs,
+                      audioDurationMs,
+                    );
+                  if (audioWriter) {
+                    try {
+                      const audioPath = audioWriter.finalize(
+                        result.lastInsertRowid,
+                      );
+                      audioWriter = null;
+                      db.prepare(
+                        "UPDATE transcription_history SET audio_file_path = ? WHERE id = ?",
+                      ).run(audioPath, Number(result.lastInsertRowid));
+                    } catch {}
+                  }
+                } catch {
+                  if (audioWriter) audioWriter.abort();
+                  audioWriter = null;
+                }
               });
           },
           onError: (message) => {
@@ -409,6 +443,7 @@ const stream = new Hono().get(
                   data.byteOffset,
                   data.byteOffset + data.byteLength,
                 ) as ArrayBuffer);
+          audioWriter?.write(buf);
           if (
             !upstream ||
             (!upstream.waitUntilReady && notifiedReadyToken !== readyToken)
@@ -459,6 +494,14 @@ const stream = new Hono().get(
             pendingChunksDropped = false;
             pendingCommit = false;
             reconnectAttempts = 0;
+            prewarmPostProcess();
+            if (audioWriter) audioWriter.abort();
+            try {
+              audioWriter = new AudioWriter();
+            } catch (err) {
+              log.error(`Failed to create audio writer: ${err}`);
+              audioWriter = null;
+            }
             // A prior upstream error disables streaming only for the rest of
             // that recording; each new recording gets a fresh attempt.
             streamingUnsupported = false;
@@ -521,6 +564,10 @@ const stream = new Hono().get(
           case "cancel":
             pendingCommit = false;
             pendingAudioChunks = [];
+            if (audioWriter) {
+              audioWriter.abort();
+              audioWriter = null;
+            }
             if (
               upstream &&
               voiceDefaults &&
@@ -538,6 +585,10 @@ const stream = new Hono().get(
         closed = true;
         pendingAudioChunks = [];
         pendingCommit = false;
+        if (audioWriter) {
+          audioWriter.abort();
+          audioWriter = null;
+        }
         try {
           upstream?.close();
         } catch {}
@@ -548,6 +599,10 @@ const stream = new Hono().get(
         closed = true;
         pendingAudioChunks = [];
         pendingCommit = false;
+        if (audioWriter) {
+          audioWriter.abort();
+          audioWriter = null;
+        }
         try {
           upstream?.close();
         } catch {}
