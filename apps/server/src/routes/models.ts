@@ -15,6 +15,13 @@ import {
 } from "../lib/parakeet/constants.js";
 import { getModelStatus as getParakeetModelStatus } from "../lib/parakeet/models.js";
 import { capture } from "../lib/posthog.js";
+import {
+  STARLING_MODELS,
+  STARLING_PROVIDER_ID,
+  STARLING_PROVIDER_NAME,
+} from "../lib/starling/constants.js";
+import { getStarlingModelStatus } from "../lib/starling/models.js";
+import { canRunStarling } from "../lib/starling/server.js";
 import { stripProviderPrefix } from "../lib/streaming/types.js";
 import { isServerBinaryAvailable } from "../lib/whisper/binary.js";
 import {
@@ -119,6 +126,19 @@ const LOCAL_PARAKEET_VOICE_MODELS: AvailableModel[] = PARAKEET_MODELS.map(
     model_id: `${PARAKEET_PROVIDER_ID}/${m.id}`,
     model_name: m.displayName,
     family: "parakeet",
+    type: "voice" as const,
+    cost_input: 0,
+    cost_output: 0,
+  }),
+);
+
+const LOCAL_STARLING_VOICE_MODELS: AvailableModel[] = STARLING_MODELS.map(
+  (m) => ({
+    provider_id: STARLING_PROVIDER_ID,
+    provider_name: STARLING_PROVIDER_NAME,
+    model_id: `${STARLING_PROVIDER_ID}/${m.id}`,
+    model_name: m.displayName,
+    family: m.family,
     type: "voice" as const,
     cost_input: 0,
     cost_output: 0,
@@ -439,6 +459,18 @@ const models = new Hono()
         const status = getParakeetModelStatus(modelId);
         if (status?.status === "ready") {
           available.push({ ...parakeetModel, curated: true });
+        }
+      }
+
+      // Add local starling voice models (only when the server is reachable
+      // and its bundled model is loaded). Status is async — it probes /health.
+      if (canRunStarling()) {
+        for (const starlingModel of LOCAL_STARLING_VOICE_MODELS) {
+          const modelId = starlingModel.model_id.split("/")[1];
+          const status = await getStarlingModelStatus(modelId);
+          if (status?.status === "ready") {
+            available.push({ ...starlingModel, curated: true });
+          }
         }
       }
 

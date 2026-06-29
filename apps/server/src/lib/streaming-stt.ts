@@ -1,6 +1,7 @@
 import { getDb } from "./db.js";
 import { MLX_ASR_PROVIDER_ID } from "./mlx-asr/constants.js";
 import { PARAKEET_PROVIDER_ID } from "./parakeet/constants.js";
+import { STARLING_PROVIDER_ID } from "./starling/constants.js";
 import { getProvider, supportsStreaming } from "./streaming/registry.js";
 import type { StreamCallbacks, StreamSession } from "./streaming/types.js";
 import type { AsrVocabularyBias } from "./vocabulary-bias.js";
@@ -13,6 +14,7 @@ const LOCAL_STT_PROVIDERS = new Set([
   WHISPER_PROVIDER_ID,
   MLX_ASR_PROVIDER_ID,
   PARAKEET_PROVIDER_ID,
+  STARLING_PROVIDER_ID,
 ]);
 
 export function openStreamingSession(opts: {

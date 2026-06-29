@@ -359,7 +359,7 @@ export default function OnboardingPage(): React.JSX.Element {
     (
       defId: string,
       name: string,
-      engine?: "whisper" | "mlx" | "parakeet",
+      engine?: "whisper" | "mlx" | "parakeet" | "starling",
       source: "auto" | "selector" = "selector",
     ) => {
       if (engine === "mlx") {
@@ -415,7 +415,7 @@ export default function OnboardingPage(): React.JSX.Element {
   );
 
   const downloadLocalModel = useCallback(
-    (modelId: string, engine?: "whisper" | "mlx" | "parakeet") => {
+    (modelId: string, engine?: "whisper" | "mlx" | "parakeet" | "starling") => {
       if (engine === "mlx") {
         void downloadMlxModel(modelId);
         return;
@@ -429,6 +429,7 @@ export default function OnboardingPage(): React.JSX.Element {
     available,
     whisperStatus,
     mlxStatus,
+    null,
     null,
     {
       selectedModelId: selectedModel?.model_id,
@@ -1041,10 +1042,16 @@ function ModelSelectorOverlay({
   onSelectLocal: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => void;
-  onDownload: (defId: string, engine?: "whisper" | "mlx" | "parakeet") => void;
-  onRetryLocal: (defId: string, engine: "whisper" | "mlx" | "parakeet") => void;
+  onDownload: (
+    defId: string,
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
+  ) => void;
+  onRetryLocal: (
+    defId: string,
+    engine: "whisper" | "mlx" | "parakeet" | "starling",
+  ) => void;
   onClose: () => void;
   onSaveKey: () => Promise<boolean>;
 }): React.JSX.Element {
@@ -1090,7 +1097,7 @@ function ModelSelectorOverlay({
   const handleSelectLocal = (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => {
     const provider =
       engine === "mlx"

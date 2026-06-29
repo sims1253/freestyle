@@ -3,6 +3,7 @@ import type {
   AvailableModel,
   MlxAsrStatus,
   ParakeetStatus,
+  StarlingStatus,
   VoiceItem,
   WhisperStatus,
 } from "@renderer/lib/models";
@@ -40,6 +41,7 @@ export interface UseModels {
   whisperStatus: WhisperStatus | null;
   mlxStatus: MlxAsrStatus | null;
   parakeetStatus: ParakeetStatus | null;
+  starlingStatus: StarlingStatus | null;
   llmCleanup: boolean;
   mlxKeepAliveMinutes: number;
 
@@ -66,22 +68,26 @@ export interface UseModels {
   selectLocalVoice: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => Promise<void>;
   retryLocalMlx: (defId: string) => Promise<void>;
   downloadLocal: (
     defId: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => void;
-  cancelLocal: (defId: string, engine?: "whisper" | "mlx" | "parakeet") => void;
+  cancelLocal: (
+    defId: string,
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
+  ) => void;
   deleteLocal: (
     defId: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => Promise<void>;
   selectLocalLlmModel: (modelName: string) => Promise<void>;
   setCleanup: (next: boolean) => void;
   saveMlxKeepAliveMinutes: (minutes: number) => void;
   saveParakeetBackend: (backend: string) => void;
+  saveStarlingSetting: (key: string, value: string) => void;
   deleteProvider: (provider: string) => Promise<void>;
 }
 
@@ -97,6 +103,9 @@ export function useModels(): UseModels {
   );
   const [mlxStatus, setMlxStatus] = useState<MlxAsrStatus | null>(null);
   const [parakeetStatus, setParakeetStatus] = useState<ParakeetStatus | null>(
+    null,
+  );
+  const [starlingStatus, setStarlingStatus] = useState<StarlingStatus | null>(
     null,
   );
   const [mlxKeepAliveMinutes, setMlxKeepAliveMinutes] = useState(
@@ -219,12 +228,33 @@ export function useModels(): UseModels {
     return null;
   }, []);
 
+  const loadStarlingStatus = useCallback(async () => {
+    try {
+      const res = await getClient().api.starling.status.$get();
+      if (res.ok) {
+        const data: StarlingStatus = await res.json();
+        setStarlingStatus(data);
+        return data;
+      }
+    } catch (err) {
+      console.error("Failed to load starling status:", err);
+    }
+    return null;
+  }, []);
+
   useEffect(() => {
     loadData();
     loadWhisperStatus();
     loadParakeetStatus();
+    loadStarlingStatus();
     if (IS_MAC) loadMlxStatus();
-  }, [loadData, loadWhisperStatus, loadParakeetStatus, loadMlxStatus]);
+  }, [
+    loadData,
+    loadWhisperStatus,
+    loadParakeetStatus,
+    loadStarlingStatus,
+    loadMlxStatus,
+  ]);
 
   // Poll whisper status while a download is active.
   useEffect(() => {
@@ -312,6 +342,7 @@ export function useModels(): UseModels {
     whisperStatus,
     mlxStatus,
     parakeetStatus,
+    starlingStatus,
     {
       defaultVoice,
       keyProviders,
@@ -370,14 +401,16 @@ export function useModels(): UseModels {
     async (
       defId: string,
       name: string,
-      engine?: "whisper" | "mlx" | "parakeet",
+      engine?: "whisper" | "mlx" | "parakeet" | "starling",
     ) => {
       const provider =
         engine === "mlx"
           ? "local-mlx"
           : engine === "parakeet"
             ? "local-parakeet"
-            : "local-whisper";
+            : engine === "starling"
+              ? "local-starling"
+              : "local-whisper";
       await getClient().api.models.configured.$post({
         json: {
           provider,
@@ -395,6 +428,10 @@ export function useModels(): UseModels {
         getClient()
           .api.parakeet.server.start.$post({ json: { modelId: defId } })
           .catch(() => {});
+      } else if (engine === "starling") {
+        getClient()
+          .api.starling.server.start.$post({ json: { modelId: defId } })
+          .catch(() => {});
       } else {
         getClient()
           .api.whisper.server.start.$post({ json: { modelId: defId } })
@@ -406,7 +443,7 @@ export function useModels(): UseModels {
   );
 
   const downloadLocal = useCallback(
-    (defId: string, engine?: "whisper" | "mlx" | "parakeet") => {
+    (defId: string, engine?: "whisper" | "mlx" | "parakeet" | "starling") => {
       if (engine === "mlx") {
         void getClient()
           .api["mlx-asr"].models[":model"].download.$post({
@@ -419,6 +456,13 @@ export function useModels(): UseModels {
             param: { model: defId },
           })
           .then(() => loadParakeetStatus());
+      } else if (engine === "starling") {
+        // Starling has no weights download — "download" starts/loads the server.
+        void getClient()
+          .api.starling.models[":model"].download.$post({
+            param: { model: defId },
+          })
+          .then(() => loadStarlingStatus());
       } else {
         void getClient()
           .api.whisper.models[":model"].download.$post({
@@ -427,11 +471,11 @@ export function useModels(): UseModels {
           .then(() => loadWhisperStatus());
       }
     },
-    [loadMlxStatus, loadWhisperStatus, loadParakeetStatus],
+    [loadMlxStatus, loadWhisperStatus, loadParakeetStatus, loadStarlingStatus],
   );
 
   const cancelLocal = useCallback(
-    (defId: string, engine?: "whisper" | "mlx" | "parakeet") => {
+    (defId: string, engine?: "whisper" | "mlx" | "parakeet" | "starling") => {
       if (engine === "mlx") {
         void getClient()
           .api["mlx-asr"].models[":model"].cancel.$post({
@@ -444,6 +488,12 @@ export function useModels(): UseModels {
             param: { model: defId },
           })
           .then(() => loadParakeetStatus());
+      } else if (engine === "starling") {
+        void getClient()
+          .api.starling.models[":model"].cancel.$post({
+            param: { model: defId },
+          })
+          .then(() => loadStarlingStatus());
       } else {
         void getClient()
           .api.whisper.models[":model"].cancel.$post({
@@ -452,11 +502,14 @@ export function useModels(): UseModels {
           .then(() => loadWhisperStatus());
       }
     },
-    [loadMlxStatus, loadWhisperStatus, loadParakeetStatus],
+    [loadMlxStatus, loadWhisperStatus, loadParakeetStatus, loadStarlingStatus],
   );
 
   const deleteLocal = useCallback(
-    async (defId: string, engine?: "whisper" | "mlx" | "parakeet") => {
+    async (
+      defId: string,
+      engine?: "whisper" | "mlx" | "parakeet" | "starling",
+    ) => {
       if (engine === "mlx") {
         await getClient().api["mlx-asr"].models[":model"].$delete({
           param: { model: defId },
@@ -467,6 +520,11 @@ export function useModels(): UseModels {
           param: { model: defId },
         });
         await loadParakeetStatus();
+      } else if (engine === "starling") {
+        await getClient().api.starling.models[":model"].$delete({
+          param: { model: defId },
+        });
+        await loadStarlingStatus();
       } else {
         await getClient().api.whisper.models[":model"].$delete({
           param: { model: defId },
@@ -475,7 +533,13 @@ export function useModels(): UseModels {
       }
       await loadData();
     },
-    [loadMlxStatus, loadWhisperStatus, loadParakeetStatus, loadData],
+    [
+      loadMlxStatus,
+      loadWhisperStatus,
+      loadParakeetStatus,
+      loadStarlingStatus,
+      loadData,
+    ],
   );
 
   const retryLocalMlx = useCallback(
@@ -567,6 +631,21 @@ export function useModels(): UseModels {
     [loadParakeetStatus, parakeetStatus],
   );
 
+  // Persist an arbitrary starling setting key (python path, source path,
+  // host, port, keep-alive, streaming tunables) via the generic settings route.
+  const saveStarlingSetting = useCallback(
+    (key: string, value: string) => {
+      getClient()
+        .api.settings[":key"].$put({
+          param: { key },
+          json: { value },
+        })
+        .then(() => loadStarlingStatus())
+        .catch((err) => console.error("Failed to save starling setting:", err));
+    },
+    [loadStarlingStatus],
+  );
+
   const deleteProvider = useCallback(
     async (provider: string) => {
       const client = getClient();
@@ -654,6 +733,7 @@ export function useModels(): UseModels {
     whisperStatus,
     mlxStatus,
     parakeetStatus,
+    starlingStatus,
     llmCleanup,
     mlxKeepAliveMinutes,
     keyProviders,
@@ -685,6 +765,7 @@ export function useModels(): UseModels {
     setCleanup,
     saveMlxKeepAliveMinutes,
     saveParakeetBackend,
+    saveStarlingSetting,
     deleteProvider,
   };
 }

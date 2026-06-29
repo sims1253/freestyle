@@ -5,6 +5,7 @@ import { MlxLocalTranscriptionProvider } from "./providers/mlx-local.js";
 import { OpenAITranscriptionProvider } from "./providers/openai.js";
 import { ParakeetLocalTranscriptionProvider } from "./providers/parakeet-local.js";
 import { SonioxTranscriptionProvider } from "./providers/soniox.js";
+import { StarlingLocalTranscriptionProvider } from "./providers/starling-local.js";
 import { WhisperLocalTranscriptionProvider } from "./providers/whisper-local.js";
 import type { TranscriptionProvider } from "./types.js";
 
@@ -17,6 +18,7 @@ const providers: TranscriptionProvider[] = [
   new WhisperLocalTranscriptionProvider(),
   new MlxLocalTranscriptionProvider(),
   new ParakeetLocalTranscriptionProvider(),
+  new StarlingLocalTranscriptionProvider(),
 ];
 
 const providerMap = new Map(providers.map((p) => [p.providerId, p]));

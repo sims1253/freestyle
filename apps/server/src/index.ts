@@ -21,6 +21,7 @@ import models from "./routes/models.js";
 import parakeet, { autoStartParakeetServer } from "./routes/parakeet.js";
 import postProcessRoute from "./routes/post-process-route.js";
 import settings from "./routes/settings.js";
+import starling, { autoStartStarlingServer } from "./routes/starling.js";
 import stream from "./routes/stream.js";
 import transcribe from "./routes/transcribe.js";
 import vocabulary from "./routes/vocabulary.js";
@@ -80,6 +81,7 @@ const app = new Hono()
   .route("/api/whisper", whisper)
   .route("/api/parakeet", parakeet)
   .route("/api/mlx-asr", mlxAsr)
+  .route("/api/starling", starling)
   .route("/mcp", mcp)
   .route("/stream", stream);
 
@@ -87,11 +89,13 @@ export { cleanupOldAudioFiles } from "./lib/audio-backup.js";
 export { closeDb } from "./lib/db.js";
 export { stopMlxServer } from "./lib/mlx-asr/server.js";
 export { stopServer as stopParakeetServer } from "./lib/parakeet/server.js";
+export { stopStarlingServer } from "./lib/starling/server.js";
 export { stopServer as stopWhisperServer } from "./lib/whisper/server.js";
 export {
   activateManagedMlxRuntimeForAppVersion,
   autoStartMlxAsrServer,
   autoStartParakeetServer,
+  autoStartStarlingServer,
   autoStartWhisperServer,
   prefetchManagedMlxRuntimeForAppRelease,
   reconcileUnsupportedMlxVoiceDefault,

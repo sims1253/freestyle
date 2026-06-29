@@ -19,6 +19,7 @@ export function PairCard({
   onChangeLlm,
   onConfigureWarming,
   onConfigureParakeet,
+  onConfigureStarling,
 }: {
   voice: ConfiguredModel | undefined;
   llm: ConfiguredModel | undefined;
@@ -30,9 +31,11 @@ export function PairCard({
   onConfigureWarming?: () => void;
   /** When set, shows a "Compute backend" link by the voice button. */
   onConfigureParakeet?: () => void;
+  /** When set, shows a "Starling settings" link by the voice button. */
+  onConfigureStarling?: () => void;
 }): React.JSX.Element {
-  // At most one engine is active at a time, so the two links are mutually
-  // exclusive. Precedence: MLX warming, then parakeet backend.
+  // At most one engine is active at a time, so the links are mutually
+  // exclusive. Precedence: MLX warming, then parakeet backend, then starling.
   const configureLink = onConfigureWarming ? (
     <button
       type="button"
@@ -48,6 +51,14 @@ export function PairCard({
       className="text-primary ml-auto text-[12px] font-medium underline-offset-2 hover:underline"
     >
       Compute backend
+    </button>
+  ) : onConfigureStarling ? (
+    <button
+      type="button"
+      onClick={onConfigureStarling}
+      className="text-primary ml-auto text-[12px] font-medium underline-offset-2 hover:underline"
+    >
+      Starling settings
     </button>
   ) : undefined;
 

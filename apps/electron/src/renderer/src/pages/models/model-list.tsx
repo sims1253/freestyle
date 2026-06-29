@@ -65,11 +65,11 @@ interface VoiceHandlers {
   onPickLocalVoice: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => void;
   onRequestDeleteLocal: (
     defId: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => void;
 }
 
@@ -199,11 +199,11 @@ export function ModelList({
   onPickLocalVoice: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => void;
   onRequestDeleteLocal: (
     defId: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => void;
 }): React.JSX.Element {
   const [search, setSearch] = useState("");
@@ -370,7 +370,7 @@ function VoiceTiers({
   onPickLocalVoice: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => void;
   onShowAll: () => void;
 }): React.JSX.Element {

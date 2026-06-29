@@ -5,6 +5,7 @@ import {
   LLM_PROVIDERS,
   type MlxAsrStatus,
   type ParakeetStatus,
+  type StarlingStatus,
   VOICE_PROVIDERS,
   type VoiceItem,
   type WhisperStatus,
@@ -42,6 +43,7 @@ export function groupByProvider(
     if (type === "voice" && m.provider_id === "local-whisper") continue;
     if (type === "voice" && m.provider_id === "local-mlx") continue;
     if (type === "voice" && m.provider_id === "local-parakeet") continue;
+    if (type === "voice" && m.provider_id === "local-starling") continue;
     let entry = map.get(m.provider_id);
     if (!entry) {
       entry = {
@@ -61,14 +63,22 @@ export function buildSettingsVoiceItems(
   whisperStatus: WhisperStatus | null,
   mlxStatus: MlxAsrStatus | null,
   parakeetStatus: ParakeetStatus | null,
+  starlingStatus: StarlingStatus | null,
   ctx: {
     defaultVoice: ConfiguredModel | undefined;
     keyProviders: Set<string>;
   },
 ): VoiceItem[] {
-  return buildVoiceItems(available, whisperStatus, mlxStatus, parakeetStatus, {
-    selectedModelId: ctx.defaultVoice?.model_id,
-    selectedProvider: ctx.defaultVoice?.provider,
-    keyProviders: ctx.keyProviders,
-  });
+  return buildVoiceItems(
+    available,
+    whisperStatus,
+    mlxStatus,
+    parakeetStatus,
+    starlingStatus,
+    {
+      selectedModelId: ctx.defaultVoice?.model_id,
+      selectedProvider: ctx.defaultVoice?.provider,
+      keyProviders: ctx.keyProviders,
+    },
+  );
 }

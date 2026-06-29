@@ -82,11 +82,11 @@ export function ModelModal({
   onPickLocalVoice: (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => void;
   onRequestDeleteLocal: (
     defId: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ) => void;
   onBack: () => void;
   onSaveKey: (key: string) => void;

@@ -47,6 +47,7 @@ import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import server, {
   activateManagedMlxRuntimeForAppVersion,
   autoStartParakeetServer,
+  autoStartStarlingServer,
   autoStartWhisperServer,
   cleanupOldAudioFiles,
   closeDb,
@@ -1292,6 +1293,7 @@ app.whenReady().then(async () => {
   reconcileUnsupportedMlxVoiceDefault();
   autoStartWhisperServer();
   autoStartParakeetServer();
+  autoStartStarlingServer();
 
   // Clean up old audio backups on startup and every 6 hours
   try {

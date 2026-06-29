@@ -92,6 +92,49 @@ export interface ParakeetStatus {
   activeBackend: string;
 }
 
+export interface StarlingModelDef {
+  id: string;
+  serverModule: string;
+  modelArg: string | null;
+  displayName: string;
+  family: string;
+  speed: string;
+  quality: string;
+  vramRequired: string;
+}
+
+export interface StarlingModelDownloadState {
+  model: string;
+  displayName: string;
+  /** "ready" once the starling server is reachable and its model is loaded. */
+  status: "ready" | "not_ready" | "error";
+  error?: string;
+}
+
+export interface StarlingStatus {
+  providerId: string;
+  providerName: string;
+  canRun: boolean;
+  blockedReason: string | null;
+  /** Resolved python executable (from setting or PATH), or null. */
+  pythonPath: string | null;
+  /** User-configured python path (may be null → PATH fallback). */
+  configuredPythonPath: string | null;
+  /** User-configured starling source/checkout dir, or null. */
+  sourcePath: string | null;
+  host: string;
+  port: number;
+  baseUrl: string;
+  serverRunning: boolean;
+  serverFailed: boolean;
+  keepAliveMinutes: number;
+  partialIntervalMs: number;
+  segmentAdvanceMs: number;
+  models: StarlingModelDownloadState[];
+  modelDefinitions: StarlingModelDef[];
+  setupHint: string;
+}
+
 export const CLOUD_VOICE_PROVIDERS = [
   "openai",
   "groq",
@@ -105,6 +148,7 @@ export const VOICE_PROVIDERS = [
   "local-whisper",
   "local-mlx",
   "local-parakeet",
+  "local-starling",
 ];
 
 export const LLM_PROVIDERS = [
@@ -132,6 +176,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   "local-whisper": "Local Whisper",
   "local-mlx": "Local MLX",
   "local-parakeet": "Local Parakeet",
+  "local-starling": "Local Starling",
 };
 
 /** Where to create an API key, linked from the key-entry views. */
@@ -168,8 +213,8 @@ export function formatSpeed(bps: number): string {
 export interface VoiceItem {
   key: string;
   kind: "local" | "cloud";
-  /** Which on-device engine powers this row (whisper.cpp vs MLX vs parakeet.cpp). */
-  localEngine?: "whisper" | "mlx" | "parakeet";
+  /** Which on-device engine powers this row (whisper.cpp vs MLX vs parakeet.cpp vs starling). */
+  localEngine?: "whisper" | "mlx" | "parakeet" | "starling";
   name: string;
   provider: string;
   modelId: string;
@@ -284,12 +329,14 @@ export function buildVoiceItems(
   whisperStatus: WhisperStatus | null,
   mlxStatus: MlxAsrStatus | null,
   parakeetStatus: ParakeetStatus | null,
+  starlingStatus: StarlingStatus | null,
   ctx: {
     selectedModelId?: string;
     selectedProvider?: string;
     selectedWhisperModelId?: string;
     selectedMlxModelId?: string;
     selectedParakeetModelId?: string;
+    selectedStarlingModelId?: string;
     keyProviders: Set<string>;
   },
 ): VoiceItem[] {
@@ -404,6 +451,7 @@ export function buildVoiceItems(
     if (m.provider_id === "local-whisper") continue;
     if (m.provider_id === "local-mlx") continue;
     if (m.provider_id === "local-parakeet") continue;
+    if (m.provider_id === "local-starling") continue;
     if (!VOICE_PROVIDERS.includes(m.provider_id)) continue;
     if (seen.has(m.model_id)) continue;
     seen.add(m.model_id);
@@ -433,5 +481,62 @@ export function buildVoiceItems(
     return am - bm;
   });
 
-  return [...whisperLocal, ...mlxLocal, ...parakeetLocal, ...cloud];
+  const starlingLocal: VoiceItem[] = (
+    starlingStatus?.modelDefinitions ?? []
+  ).map((def) => {
+    const state = starlingStatus?.models.find((m) => m.model === def.id);
+    const canRun = starlingStatus?.canRun ?? false;
+    const modelId = `local-starling/${def.id}`;
+    // Map starling's three-state to the shared download-state shape used by
+    // the voice card UI: ready → ready; not_ready → not_downloaded (prompts
+    // the user to start the server); error → error.
+    const sharedStatus: WhisperModelDownloadState["status"] =
+      state?.status === "ready"
+        ? "ready"
+        : state?.status === "error"
+          ? "error"
+          : "not_downloaded";
+    const fallbackState: WhisperModelDownloadState | undefined = canRun
+      ? {
+          model: def.id,
+          displayName: def.displayName,
+          status: sharedStatus,
+        }
+      : {
+          model: def.id,
+          displayName: def.displayName,
+          status: "error" as const,
+          error:
+            starlingStatus?.blockedReason ??
+            starlingStatus?.setupHint ??
+            "Starling setup required",
+        };
+    return {
+      key: modelId,
+      kind: "local",
+      localEngine: "starling",
+      name: def.displayName,
+      provider: "On-device · Starling",
+      modelId,
+      speed: SPEED_RANK[def.speed] ?? 4,
+      quality: QUALITY_RANK[def.quality] ?? 4,
+      note: "Semi-online streaming — transcribes overlapping chunks while you record",
+      defId: def.id,
+      ram: def.vramRequired,
+      status: sharedStatus,
+      state: state ? { ...state, status: sharedStatus } : fallbackState,
+      selected:
+        ctx.selectedStarlingModelId === def.id ||
+        (ctx.selectedProvider === "local-starling" &&
+          ctx.selectedModelId === modelId),
+    };
+  });
+
+  return [
+    ...whisperLocal,
+    ...mlxLocal,
+    ...parakeetLocal,
+    ...starlingLocal,
+    ...cloud,
+  ];
 }

@@ -19,6 +19,7 @@ import { ConfirmDialog, type ModalState, ModelModal } from "./model-modal";
 import { Eyebrow, PageHeader, PageShell } from "./page-chrome";
 import { PairCard } from "./pair-card";
 import { ParakeetBackendDialog } from "./parakeet-backend-section";
+import { StarlingSettingsDialog } from "./starling-settings-section";
 import type { ApiKeyEntry, ConfiguredModel } from "./types";
 import { useModels } from "./use-models";
 import { displayName } from "./utils";
@@ -32,7 +33,7 @@ export default function ModelsPage(): React.JSX.Element {
 
   const [pendingLocalDelete, setPendingLocalDelete] = useState<{
     defId: string;
-    engine?: "whisper" | "mlx" | "parakeet";
+    engine?: "whisper" | "mlx" | "parakeet" | "starling";
     name: string;
   } | null>(null);
   const [pendingProviderDelete, setPendingProviderDelete] = useState<
@@ -40,6 +41,7 @@ export default function ModelsPage(): React.JSX.Element {
   >(null);
   const [warmingOpen, setWarmingOpen] = useState(false);
   const [parakeetBackendOpen, setParakeetBackendOpen] = useState(false);
+  const [starlingOpen, setStarlingOpen] = useState(false);
 
   // -------------------------------------------------------------------------
   // Modal flow
@@ -79,14 +81,14 @@ export default function ModelsPage(): React.JSX.Element {
   const onPickLocalVoice = (
     defId: string,
     name: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ): void => {
     void m.selectLocalVoice(defId, name, engine).then(closeModal);
   };
 
   const onRequestDeleteLocal = (
     defId: string,
-    engine?: "whisper" | "mlx" | "parakeet",
+    engine?: "whisper" | "mlx" | "parakeet" | "starling",
   ): void => {
     const item = m.voiceItems.find(
       (row) => row.defId === defId && row.localEngine === engine,
@@ -137,7 +139,8 @@ export default function ModelsPage(): React.JSX.Element {
     (c) =>
       c.provider === "local-whisper" ||
       c.provider === "local-mlx" ||
-      c.provider === "local-parakeet",
+      c.provider === "local-parakeet" ||
+      c.provider === "local-starling",
   );
 
   // Show the MLX warming control when MLX is the active voice engine, or the
@@ -152,6 +155,9 @@ export default function ModelsPage(): React.JSX.Element {
   const showParakeetBackend =
     m.defaultVoice?.provider === "local-parakeet" &&
     (m.parakeetStatus?.availableBackends?.length ?? 0) > 1;
+
+  // Show the Starling settings link when starling is the active voice engine.
+  const showStarlingSettings = m.defaultVoice?.provider === "local-starling";
 
   return (
     <PageShell>
@@ -169,6 +175,9 @@ export default function ModelsPage(): React.JSX.Element {
           }
           onConfigureParakeet={
             showParakeetBackend ? () => setParakeetBackendOpen(true) : undefined
+          }
+          onConfigureStarling={
+            showStarlingSettings ? () => setStarlingOpen(true) : undefined
           }
         />
 
@@ -208,6 +217,14 @@ export default function ModelsPage(): React.JSX.Element {
           status={m.parakeetStatus}
           onChange={m.saveParakeetBackend}
           onClose={() => setParakeetBackendOpen(false)}
+        />
+      )}
+
+      {starlingOpen && m.starlingStatus && (
+        <StarlingSettingsDialog
+          status={m.starlingStatus}
+          onSaveSetting={m.saveStarlingSetting}
+          onClose={() => setStarlingOpen(false)}
         />
       )}
 
@@ -449,7 +466,7 @@ function CleanupPromptEditor(): React.JSX.Element {
           .catch(() => {});
       }, 600);
     },
-    [defaultPrompt],
+    [defaultPrompt, saveTimeoutRef.current, saveTimeoutRef],
   );
 
   const handleReset = useCallback(() => {
