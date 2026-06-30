@@ -13,6 +13,8 @@ import {
   canRunStarling,
   describeStarlingSetupBlocker,
   findStarlingPython,
+  getStarlingPhase,
+  getStarlingQueueDepth,
   getStarlingServerBaseUrl,
   isStarlingServerFailed,
   isStarlingServerRunning,
@@ -52,6 +54,10 @@ const starling = new Hono()
       baseUrl: getStarlingServerBaseUrl(),
       serverRunning: isStarlingServerRunning(),
       serverFailed: isStarlingServerFailed(),
+      /** Lifecycle phase from /health: unloaded/loading_weights/warming_up/ready. */
+      phase: getStarlingPhase(),
+      /** Requests queued for the GPU worker (null when server not managed). */
+      queueDepth: getStarlingQueueDepth(),
       keepAliveMinutes: getStarlingKeepAliveMinutes(),
       partialIntervalMs: getStarlingPartialIntervalMs(),
       segmentAdvanceMs: getStarlingSegmentAdvanceMs(),

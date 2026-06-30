@@ -33,8 +33,38 @@ const log = createAppLogger("starling");
 const START_TIMEOUT_MS = 180_000; // model load + CUDA-graph warmup is slow
 const HEALTH_POLL_INTERVAL_MS = 1_000;
 const TRANSCRIBE_TIMEOUT_MS = 300_000;
-const BUSY_RETRY_MS = 150;
-const BUSY_MAX_RETRIES = 40; // ~6s of "server busy" before giving up on a chunk
+/**
+ * Starling now queues up to MAX_WAITERS concurrent requests server-side and
+ * only returns 503 on genuine queue overflow. We keep a short retry for that
+ * overflow case (and for 499 self-cancels) rather than the old busy-storm.
+ */
+const OVERFLOW_RETRY_MS = 200;
+const OVERFLOW_MAX_RETRIES = 5;
+
+/** Lifecycle phase reported by the starling server's /health endpoint. */
+export type StarlingPhase =
+  | "unloaded"
+  | "loading_weights"
+  | "warming_up"
+  | "loaded"
+  | "ready"
+  | string;
+
+/** One chunk-level segment from the starling /inference response. */
+export interface StarlingSegment {
+  text: string;
+  startSecond: number;
+  endSecond: number;
+}
+
+/** Structured transcription result mirroring TranscribeResult in types.ts. */
+export interface StarlingTranscribeResult {
+  text: string;
+  segments?: StarlingSegment[];
+  durationInSeconds?: number;
+  /** The request id we sent (if any), for abort correlation. */
+  requestId?: string;
+}
 
 let serverProcess: ChildProcess | null = null;
 let currentModelId: string | null = null;
@@ -43,6 +73,10 @@ let serverFailed = false;
 let startPromise: Promise<void> | null = null;
 let unloadTimer: ReturnType<typeof setTimeout> | null = null;
 let lifecyclePromise: Promise<void> = Promise.resolve();
+// Cached lifecycle phase + queue depth from the last /health poll, surfaced to
+// the status route so the UI can render cold-start progress and backpressure.
+let serverPhase: StarlingPhase | null = null;
+let lastQueueDepth: number | null = null;
 
 export function isStarlingServerRunning(): boolean {
   return serverProcess !== null && serverReady;
@@ -163,6 +197,10 @@ interface StarlingHealth {
   model?: string;
   loaded?: boolean;
   busy?: boolean;
+  /** Lifecycle phase: unloaded/loading_weights/warming_up/loaded/ready. */
+  phase?: StarlingPhase;
+  /** Number of requests queued for the GPU worker (excludes running). */
+  queueDepth?: number;
 }
 
 async function fetchHealth(
@@ -172,7 +210,17 @@ async function fetchHealth(
   try {
     const res = await fetch(`${baseUrl}/health`, { signal });
     if (!res.ok) return null;
-    return (await res.json()) as StarlingHealth;
+    const data = (await res.json()) as Record<string, unknown>;
+    // Starling names the queue field queue_depth; normalize to queueDepth.
+    return {
+      status: typeof data.status === "string" ? data.status : undefined,
+      model: typeof data.model === "string" ? data.model : undefined,
+      loaded: typeof data.loaded === "boolean" ? data.loaded : undefined,
+      busy: typeof data.busy === "boolean" ? data.busy : undefined,
+      phase: typeof data.phase === "string" ? data.phase : undefined,
+      queueDepth:
+        typeof data.queue_depth === "number" ? data.queue_depth : undefined,
+    };
   } catch {
     return null;
   }
@@ -180,10 +228,21 @@ async function fetchHealth(
 
 /**
  * Is an externally-started (or already-running) starling server reachable and
- * loaded? Used by the status/catalog path without forcing a spawn.
+ * loaded? Used by the status/catalog path without forcing a spawn. Exposes the
+ * phase/queue_depth fields so the UI can render cold-start progress.
  */
 export async function probeStarlingHealth(): Promise<StarlingHealth | null> {
   return fetchHealth(getStarlingBaseUrl());
+}
+
+export function getStarlingPhase(): StarlingPhase | null {
+  if (!serverProcess) return null;
+  return serverPhase;
+}
+
+export function getStarlingQueueDepth(): number | null {
+  if (!serverProcess) return null;
+  return lastQueueDepth;
 }
 
 async function startServer(modelId: string): Promise<void> {
@@ -248,9 +307,16 @@ async function startServer(modelId: string): Promise<void> {
       );
     }
     const health = await fetchHealth(baseUrl).catch(() => null);
+    if (health) {
+      if (health.phase) serverPhase = health.phase;
+      if (typeof health.queueDepth === "number") {
+        lastQueueDepth = health.queueDepth;
+      }
+    }
     if (health?.status === "ok" && health.loaded) {
       serverReady = true;
       serverFailed = false;
+      serverPhase = health.phase ?? "ready";
       log.info(`starling ready: model=${health.model ?? def.id}`);
       return;
     }
@@ -263,22 +329,30 @@ async function startServer(modelId: string): Promise<void> {
   );
 }
 
-/** POST a WAV body to /inference, returning the transcript text. */
+/** POST a WAV body to /inference, returning the structured transcript result. */
 async function postInference(
   body: ArrayBuffer,
   signal: AbortSignal,
-): Promise<string> {
+  requestId?: string,
+): Promise<StarlingTranscribeResult> {
   const baseUrl = getStarlingBaseUrl();
+  const headers: Record<string, string> = { "Content-Type": "audio/wav" };
+  if (requestId) headers["X-Request-Id"] = requestId;
+
   const res = await fetch(`${baseUrl}/inference`, {
     method: "POST",
-    headers: { "Content-Type": "audio/wav" },
+    headers,
     body,
     signal,
   });
 
   if (res.status === 503) {
-    // Single worker busy — callers retry via transcribePcmWithStarling's loop.
-    throw new StarlingBusyError("starling server busy");
+    // Queue overflow (starling queues up to MAX_WAITERS before rejecting).
+    throw new StarlingOverflowError("starling server queue full");
+  }
+  if (res.status === 499) {
+    // We cancelled this request via DELETE /inference/<id>.
+    throw new StarlingCancelledError("starling request cancelled");
   }
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
@@ -286,31 +360,86 @@ async function postInference(
       `starling /inference failed: ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}`,
     );
   }
-  const data = (await res.json()) as { text?: string };
-  return (data.text ?? "").trim();
+  const data = (await res.json()) as {
+    text?: string;
+    segments?: Array<{ text?: string; start_s?: number; end_s?: number }>;
+    duration_s?: number;
+    request_id?: string | null;
+  };
+  const segments: StarlingSegment[] | undefined = data.segments
+    ?.map((s) => ({
+      text: (s.text ?? "").trim(),
+      startSecond: s.start_s ?? 0,
+      endSecond: s.end_s ?? 0,
+    }))
+    .filter((s) => s.text.length > 0);
+  return {
+    text: (data.text ?? "").trim(),
+    segments,
+    durationInSeconds:
+      typeof data.duration_s === "number" ? data.duration_s : undefined,
+    requestId: requestId ?? data.request_id ?? undefined,
+  };
 }
 
-class StarlingBusyError extends Error {
+class StarlingOverflowError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "StarlingBusyError";
+    this.name = "StarlingOverflowError";
   }
 }
 
-function isBusy(err: unknown): boolean {
-  return err instanceof StarlingBusyError;
+class StarlingCancelledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StarlingCancelledError";
+  }
+}
+
+function isOverflow(err: unknown): boolean {
+  return err instanceof StarlingOverflowError;
+}
+
+function isCancelled(err: unknown): boolean {
+  return err instanceof StarlingCancelledError;
+}
+
+/**
+ * Best-effort cancel of an in-flight or queued request via
+ * `DELETE /inference/<id>`. Cancellation of a request already on the GPU is
+ * not preemptible (CUDA-graph replays finish their current step), but a queued
+ * request is dropped promptly. Errors are swallowed — abort is advisory.
+ */
+export async function abortInference(requestId: string): Promise<void> {
+  try {
+    await fetch(
+      `${getStarlingBaseUrl()}/inference/${encodeURIComponent(requestId)}`,
+      {
+        method: "DELETE",
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+  } catch {
+    // Advisory; never fatal.
+  }
 }
 
 /**
  * Transcribe raw 16 kHz mono Int16 PCM by wrapping it in a WAV header and
- * POSTing to /inference. Retries on 503 (single-worker busy) with backoff.
+ * POSTing to /inference. Returns text plus chunk-level segment timestamps.
+ *
+ * Starling queues concurrent requests server-side and only returns 503 on
+ * genuine queue overflow, so a short retry covers that rare case. Pass
+ * `requestId` to make the request abortable via {@link abortInference}.
  */
 export async function transcribePcmWithStarling(opts: {
   modelId: string;
   pcm: Uint8Array;
   sampleRate: number;
   deferUnload?: boolean;
-}): Promise<string> {
+  /** If set, sent as X-Request-Id and usable with abortInference. */
+  requestId?: string;
+}): Promise<StarlingTranscribeResult> {
   await ensureStarlingServerRunning(opts.modelId);
   clearUnloadTimer();
 
@@ -318,19 +447,25 @@ export async function transcribePcmWithStarling(opts: {
   const signal = AbortSignal.timeout(TRANSCRIBE_TIMEOUT_MS);
 
   let lastErr: unknown = null;
-  for (let attempt = 0; attempt < BUSY_MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < OVERFLOW_MAX_RETRIES; attempt++) {
     try {
-      const text = await postInference(wav.buffer, signal);
+      const result = await postInference(wav.buffer, signal, opts.requestId);
       if (!opts.deferUnload) scheduleUnload();
-      return text;
+      return result;
     } catch (err) {
       lastErr = err;
       if (signal.aborted) break;
-      if (isBusy(err)) {
-        await new Promise((r) => setTimeout(r, BUSY_RETRY_MS));
+      if (isOverflow(err)) {
+        // Queue overflow — back off briefly and retry.
+        await new Promise((r) => setTimeout(r, OVERFLOW_RETRY_MS));
         continue;
       }
-      break; // non-retryable
+      if (isCancelled(err)) {
+        // Deliberately cancelled; don't retry, surface empty result.
+        if (!opts.deferUnload) scheduleUnload();
+        return { text: "", requestId: opts.requestId };
+      }
+      break; // non-retryable error
     }
   }
   if (!opts.deferUnload) scheduleUnload();
@@ -343,7 +478,7 @@ export async function transcribePcmWithStarling(opts: {
 export async function transcribeWithStarling(opts: {
   modelId: string;
   audio: Uint8Array;
-}): Promise<string> {
+}): Promise<StarlingTranscribeResult> {
   return transcribePcmWithStarling({
     modelId: opts.modelId,
     // The REST route already delivers a WAV; hand it through unchanged.
@@ -360,6 +495,8 @@ function failServer(err: Error): void {
   serverReady = false;
   startPromise = null;
   serverFailed = true;
+  serverPhase = null;
+  lastQueueDepth = null;
 }
 
 function clearUnloadTimer(): void {
@@ -399,6 +536,8 @@ export async function stopStarlingServer(): Promise<void> {
   serverReady = false;
   startPromise = null;
   serverFailed = false;
+  serverPhase = null;
+  lastQueueDepth = null;
 
   return new Promise((resolve) => {
     let done = false;

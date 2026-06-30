@@ -127,6 +127,10 @@ export interface StarlingStatus {
   baseUrl: string;
   serverRunning: boolean;
   serverFailed: boolean;
+  /** Lifecycle phase from /health: unloaded/loading_weights/warming_up/ready. */
+  phase: string | null;
+  /** Requests queued for the GPU worker (null when server not managed). */
+  queueDepth: number | null;
   keepAliveMinutes: number;
   partialIntervalMs: number;
   segmentAdvanceMs: number;

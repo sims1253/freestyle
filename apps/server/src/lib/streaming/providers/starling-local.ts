@@ -20,12 +20,14 @@
  * see `mlx-local.ts` for the reference pattern.
  */
 
+import { randomUUID } from "node:crypto";
 import { createAppLogger } from "@freestyle/utils";
 import {
   STARLING_PROVIDER_ID,
   STARLING_SAMPLE_RATE,
 } from "../../starling/constants.js";
 import {
+  abortInference,
   applyStarlingRetentionPolicy,
   ensureStarlingServerRunning,
   getStarlingPartialInterval,
@@ -59,12 +61,18 @@ export class StarlingLocalTranscriptionProvider
   async transcribe(opts: TranscribeOptions): Promise<TranscribeResult> {
     const modelId = stripProviderPrefix(opts.model);
     const t0 = Date.now();
-    const text = await transcribeWithStarling({
+    const result = await transcribeWithStarling({
       modelId,
       audio: opts.audio,
     });
     log.debug(`inference took ${Date.now() - t0}ms`);
-    return { text };
+    // Pass through the chunk-level segment timestamps + duration starling now
+    // returns, matching the TranscribeResult shape other providers use.
+    return {
+      text: result.text,
+      segments: result.segments,
+      durationInSeconds: result.durationInSeconds,
+    };
   }
 
   supportsStreaming(_modelId: string): boolean {
@@ -113,6 +121,12 @@ class StarlingStreamingSession implements StreamSession {
   private serverReadyPromise: Promise<void>;
   private readonly partialIntervalMs: number;
   private readonly segmentAdvanceMs: number;
+  /**
+   * Request id of the currently in-flight inference, if any. When a newer
+   * partial supersedes a stale one we abort it server-side via
+   * DELETE /inference/<id> to free the GPU sooner.
+   */
+  private inFlightRequestId: string | null = null;
 
   constructor(private readonly opts: StarlingSessionOpts) {
     this.partialIntervalMs = getStarlingPartialInterval();
@@ -141,10 +155,14 @@ class StarlingStreamingSession implements StreamSession {
 
   reset(): void {
     this.clearTimer();
-    // If a final inference is in flight, resolve it with whatever we have so
-    // the caller's commit promise doesn't hang.
-    if (this.inFlight && this.commitRequested) {
-      this.opts.callbacks.onFinal(this.composeFinal());
+    // Abort any in-flight inference server-side so the GPU frees for the next
+    // recording. If a final was in flight, resolve with what we have so the
+    // caller's commit promise doesn't hang.
+    if (this.inFlight) {
+      if (this.commitRequested) {
+        this.opts.callbacks.onFinal(this.composeFinal());
+      }
+      this.abortInFlight();
     }
     this.allChunks = [];
     this.allSampleCount = 0;
@@ -168,8 +186,11 @@ class StarlingStreamingSession implements StreamSession {
     this.clearTimer();
     this.commitRequested = true;
     if (this.inFlight) {
-      // runInference's finally handler will pick up commitRequested and run
-      // the final pass.
+      // A partial is mid-flight; abort it so the final pass (more important)
+      // gets the GPU immediately instead of waiting on a stale decode.
+      this.abortInFlight();
+      this.inFlight = false;
+      this.runFinalPass();
       return;
     }
     this.runFinalPass();
@@ -178,6 +199,7 @@ class StarlingStreamingSession implements StreamSession {
   cancel(): void {
     this.canceled = true;
     this.clearTimer();
+    if (this.inFlight) this.abortInFlight();
     this.allChunks = [];
     this.allSampleCount = 0;
     this.liveChunks = [];
@@ -276,7 +298,13 @@ class StarlingStreamingSession implements StreamSession {
     if (this.closed || this.canceled) return;
     if (this.inFlight) {
       this.dirty = true;
-      if (final) this.commitRequested = true;
+      if (final) {
+        this.commitRequested = true;
+      } else {
+        // A newer partial wants the GPU now; abort the stale in-flight request
+        // server-side so it doesn't block the fresher decode. Best-effort.
+        this.abortInFlight();
+      }
       return;
     }
     if (audio.length === 0) {
@@ -289,6 +317,8 @@ class StarlingStreamingSession implements StreamSession {
 
     this.inFlight = true;
     this.dirty = false;
+    const requestId = randomUUID();
+    this.inFlightRequestId = requestId;
 
     void this.serverReadyPromise
       .then(() => {
@@ -300,14 +330,18 @@ class StarlingStreamingSession implements StreamSession {
           pcm: new Uint8Array(audio),
           sampleRate: STARLING_SAMPLE_RATE,
           deferUnload: true,
+          requestId,
         });
       })
-      .then((text) => {
-        if (text === null) return;
+      .then((result) => {
+        if (result === null) return;
         if (this.closed || this.canceled || generation !== this.generation) {
           return;
         }
-        const clean = text.trim();
+        // If a newer request superseded this one (abort + dirty), drop the
+        // stale result — the newer window is what we want to show.
+        if (this.inFlightRequestId !== requestId) return;
+        const clean = result.text.trim();
         if (final) {
           this.handleFinalResult(clean);
           return;
@@ -331,7 +365,11 @@ class StarlingStreamingSession implements StreamSession {
           if (this.closed || this.canceled) applyStarlingRetentionPolicy();
           return;
         }
+        // If a newer request superseded this one (abort path), don't touch the
+        // shared inFlight flag — the newer request owns it now.
+        if (this.inFlightRequestId !== requestId) return;
         this.inFlight = false;
+        this.inFlightRequestId = null;
         if (this.commitRequested) {
           this.commitRequested = false;
           this.runFinalPass();
@@ -341,6 +379,19 @@ class StarlingStreamingSession implements StreamSession {
           this.schedulePartial();
         }
       });
+  }
+
+  /**
+   * Abort the current in-flight inference and release the inFlight slot so the
+   * next partial can start immediately. The aborted request's promise still
+   * resolves (server returns 499 → empty result) but is dropped as stale.
+   */
+  private abortInFlight(): void {
+    const rid = this.inFlightRequestId;
+    if (!rid) return;
+    this.inFlight = false;
+    this.inFlightRequestId = null;
+    void abortInference(rid);
   }
 
   private handlePartialResult(text: string): void {

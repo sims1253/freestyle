@@ -252,7 +252,12 @@ export function StarlingSettingsDialog({
               ? "running"
               : status.serverFailed
                 ? "failed"
-                : "stopped"}
+                : status.phase
+                  ? status.phase
+                  : "stopped"}
+            {typeof status.queueDepth === "number" && status.queueDepth > 0
+              ? ` · queue ${status.queueDepth}`
+              : ""}
             {" · "}
             <code>{status.baseUrl}</code>
           </span>
