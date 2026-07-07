@@ -275,9 +275,11 @@ export function VoiceRow({
                 </>
               ) : (
                 <span>
-                  {item.localEngine === "mlx"
-                    ? "Downloading model weights..."
-                    : "Verifying..."}
+                  {item.state?.phase === "starting_server"
+                    ? "Starting server..."
+                    : item.localEngine === "mlx"
+                      ? "Downloading model weights..."
+                      : "Verifying..."}
                 </span>
               )}
             </div>

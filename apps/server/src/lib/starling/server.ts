@@ -16,7 +16,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createAppLogger } from "@freestyle/utils";
-import { getStarlingModel } from "./constants.js";
+import { getStarlingModel, STARLING_SERVER_MODULE } from "./constants.js";
 import {
   getStarlingBaseUrl,
   getStarlingHost,
@@ -68,8 +68,12 @@ export interface StarlingTranscribeResult {
 
 let serverProcess: ChildProcess | null = null;
 let currentModelId: string | null = null;
+/** Model slug the running server reports via /health (granite/parakeet/...). */
+let runningModelSlug: string | null = null;
 let serverReady = false;
 let serverFailed = false;
+/** Last error that caused the server to fail starting; surfaced to the UI. */
+let lastStartError: string | null = null;
 let startPromise: Promise<void> | null = null;
 let unloadTimer: ReturnType<typeof setTimeout> | null = null;
 let lifecyclePromise: Promise<void> = Promise.resolve();
@@ -84,6 +88,10 @@ export function isStarlingServerRunning(): boolean {
 
 export function isStarlingServerFailed(): boolean {
   return serverFailed;
+}
+
+export function getStarlingStartError(): string | null {
+  return lastStartError;
 }
 
 export function getStarlingServerBaseUrl(): string {
@@ -109,8 +117,11 @@ export function findStarlingPython(): string | null {
     configured,
     process.env.FREESTYLE_STARLING_PYTHON,
     process.env.PYTHON,
+    // Bare names — spawn resolves them via PATH. Include `py` (the standard
+    // Windows launcher) and python3 alongside python.
     "python",
     "python3",
+    "py",
   ];
   for (const c of candidates) {
     if (!c) continue;
@@ -149,6 +160,7 @@ export function startStarlingInBackground(modelId: string): void {
   if (startPromise && currentModelId === modelId) return;
 
   serverFailed = false;
+  lastStartError = null;
   ensureStarlingServerRunning(modelId)
     .then(() => {
       log.info("Server ready");
@@ -245,6 +257,12 @@ export function getStarlingQueueDepth(): number | null {
   return lastQueueDepth;
 }
 
+/** Slug of the model the running server has loaded (e.g. "parakeet"), or null. */
+export function getStarlingRunningModelSlug(): string | null {
+  if (!serverProcess) return null;
+  return runningModelSlug;
+}
+
 async function startServer(modelId: string): Promise<void> {
   const def = getStarlingModel(modelId);
   if (!def) throw new Error(`Unknown Starling model: ${modelId}`);
@@ -259,8 +277,16 @@ async function startServer(modelId: string): Promise<void> {
 
   const port = getStarlingPort();
   const host = getStarlingHost();
-  const args = ["-m", def.serverModule, "--host", host, "--port", String(port)];
-  if (def.modelArg) args.push("--model", def.modelArg);
+  const args = [
+    "-m",
+    STARLING_SERVER_MODULE,
+    "--model",
+    def.slug,
+    "--host",
+    host,
+    "--port",
+    String(port),
+  ];
 
   const source = getStarlingSourcePath();
   log.info(
@@ -285,11 +311,26 @@ async function startServer(modelId: string): Promise<void> {
   });
   proc.on("error", (err) => {
     if (serverProcess !== proc) return;
-    failServer(new Error(`Failed to start starling: ${err.message}`));
+    // ENOENT on spawn means the python executable wasn't found — give an
+    // actionable message pointing at the setting rather than a bare syscall.
+    const isNotFound = (err as NodeJS.ErrnoException).code === "ENOENT";
+    failServer(
+      new Error(
+        isNotFound
+          ? `Could not find the Python executable "${python}". Set the Python path in Starling settings to a venv that has starling installed (e.g. .venv\\Scripts\\python.exe).`
+          : `Failed to start starling: ${err.message}`,
+      ),
+    );
   });
   proc.on("close", (code) => {
     if (serverProcess !== proc) return;
-    failServer(new Error(`starling exited unexpectedly: exit code ${code}`));
+    failServer(
+      new Error(
+        code === 0
+          ? "starling server exited during startup. Check that the starling package is installed in the configured Python (pip show starling)."
+          : `starling exited during startup (exit code ${code}). See the server log for details; this usually means starling isn't installed or CUDA is unavailable.`,
+      ),
+    );
   });
 
   // Poll /health until the model reports loaded. Starling accepts connections
@@ -316,8 +357,10 @@ async function startServer(modelId: string): Promise<void> {
     if (health?.status === "ok" && health.loaded) {
       serverReady = true;
       serverFailed = false;
+      lastStartError = null;
       serverPhase = health.phase ?? "ready";
-      log.info(`starling ready: model=${health.model ?? def.id}`);
+      runningModelSlug = health.model ?? def.slug;
+      log.info(`starling ready: model=${runningModelSlug}`);
       return;
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
@@ -492,9 +535,11 @@ function failServer(err: Error): void {
   log.error(err.message);
   serverProcess = null;
   currentModelId = null;
+  runningModelSlug = null;
   serverReady = false;
   startPromise = null;
   serverFailed = true;
+  lastStartError = err.message;
   serverPhase = null;
   lastQueueDepth = null;
 }
@@ -533,9 +578,11 @@ export async function stopStarlingServer(): Promise<void> {
   const proc = serverProcess;
   serverProcess = null;
   currentModelId = null;
+  runningModelSlug = null;
   serverReady = false;
   startPromise = null;
   serverFailed = false;
+  lastStartError = null;
   serverPhase = null;
   lastQueueDepth = null;
 

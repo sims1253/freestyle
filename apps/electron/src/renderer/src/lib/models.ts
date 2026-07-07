@@ -25,7 +25,12 @@ export interface WhisperModelDownloadState {
   sizeBytes?: number;
   displayName?: string;
   status: "not_downloaded" | "downloading" | "verifying" | "ready" | "error";
-  phase?: "building_binary" | "downloading_model";
+  /**
+   * Lifecycle phase. whisper/mlx use building_binary/downloading_model during
+   * a real file fetch; starling uses starting_server while its Python sidecar
+   * loads the model into VRAM (there is no download).
+   */
+  phase?: "building_binary" | "downloading_model" | "starting_server";
   downloadProgress?: {
     bytesDownloaded: number;
     bytesTotal: number;
@@ -94,8 +99,8 @@ export interface ParakeetStatus {
 
 export interface StarlingModelDef {
   id: string;
-  serverModule: string;
-  modelArg: string | null;
+  /** starling --model slug (granite/parakeet/moss/qwen3). */
+  slug: string;
   displayName: string;
   family: string;
   speed: string;
@@ -127,6 +132,10 @@ export interface StarlingStatus {
   baseUrl: string;
   serverRunning: boolean;
   serverFailed: boolean;
+  /** Why the last start failed (spawn error, timeout, etc.), if known. */
+  startError: string | null;
+  /** Slug of the model the running server has loaded (granite/parakeet/...). */
+  runningModelSlug: string | null;
   /** Lifecycle phase from /health: unloaded/loading_weights/warming_up/ready. */
   phase: string | null;
   /** Requests queued for the GPU worker (null when server not managed). */
@@ -490,21 +499,60 @@ export function buildVoiceItems(
   ).map((def) => {
     const state = starlingStatus?.models.find((m) => m.model === def.id);
     const canRun = starlingStatus?.canRun ?? false;
+    // The server is starting up (spawned, model not yet loaded). This is a
+    // single global state, so only the SELECTED model — the one being launched
+    // — should show as "starting"/"failed"; the other starling models stay
+    // not-started until picked.
+    const isSelected =
+      ctx.selectedProvider === "local-starling" &&
+      ctx.selectedModelId === `local-starling/${def.id}`;
+    const serverStarting =
+      canRun &&
+      !starlingStatus?.serverRunning &&
+      !starlingStatus?.serverFailed &&
+      isSelected;
+    // A failed spawn only makes sense to surface on the model we tried to
+    // start; otherwise rows would all show a stale error.
+    const serverFailedForThis =
+      canRun && !!starlingStatus?.serverFailed && isSelected;
+    const startErrorMessage =
+      starlingStatus?.startError ??
+      "Starling server failed to start. Check the Python path in Starling settings.";
     const modelId = `local-starling/${def.id}`;
-    // Map starling's three-state to the shared download-state shape used by
-    // the voice card UI: ready → ready; not_ready → not_downloaded (prompts
-    // the user to start the server); error → error.
-    const sharedStatus: WhisperModelDownloadState["status"] =
-      state?.status === "ready"
+    // Map starling's server lifecycle to the shared download-state shape the
+    // voice card UI understands:
+    //   server running + this model loaded → ready (shows Use)
+    //   server starting for this model     → downloading (shows Cancel)
+    //   server failed for this model       → error (shows the failure reason)
+    //   otherwise                          → not_downloaded (shows Start)
+    const sharedStatus: WhisperModelDownloadState["status"] = state
+      ? state.status === "ready"
         ? "ready"
-        : state?.status === "error"
+        : state.status === "error"
           ? "error"
-          : "not_downloaded";
+          : serverFailedForThis
+            ? "error"
+            : serverStarting
+              ? "downloading"
+              : "not_downloaded"
+      : canRun
+        ? serverFailedForThis
+          ? "error"
+          : serverStarting
+            ? "downloading"
+            : "not_downloaded"
+        : "error";
+    // Starling's "downloading" is really "starting server", not a file fetch.
+    // Tag the state with a phase the Progress component maps to a clearer
+    // label than the default "Verifying…".
+    const startingPhase = "starting_server";
     const fallbackState: WhisperModelDownloadState | undefined = canRun
       ? {
           model: def.id,
           displayName: def.displayName,
           status: sharedStatus,
+          ...(serverStarting ? { phase: startingPhase } : {}),
+          ...(serverFailedForThis ? { error: startErrorMessage } : {}),
         }
       : {
           model: def.id,
@@ -528,7 +576,14 @@ export function buildVoiceItems(
       defId: def.id,
       ram: def.vramRequired,
       status: sharedStatus,
-      state: state ? { ...state, status: sharedStatus } : fallbackState,
+      state: state
+        ? {
+            ...state,
+            status: sharedStatus,
+            ...(serverStarting ? { phase: startingPhase } : {}),
+            ...(serverFailedForThis ? { error: startErrorMessage } : {}),
+          }
+        : fallbackState,
       selected:
         ctx.selectedStarlingModelId === def.id ||
         (ctx.selectedProvider === "local-starling" &&

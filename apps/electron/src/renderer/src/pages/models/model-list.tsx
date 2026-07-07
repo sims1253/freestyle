@@ -83,12 +83,18 @@ function buildVoiceRows(m: UseModels, h: VoiceHandlers): Row[] {
           ? ` · ${formatBytes(it.sizeBytes)}`
           : "";
       const defId = it.defId;
+      // Provider label shown in the row meta so each on-device engine is
+      // identifiable (e.g. "On-device · Starling"). Falls back to "On-device".
+      const engineLabel = it.provider ?? "On-device";
       return {
         key: it.key,
         name: it.name,
         source: "local",
-        provider: "local",
-        meta: `${it.note ?? "On-device"}${sizeNote}`,
+        // Use the engine label as the provider so the FilterBar can build a
+        // per-engine chip (whisper/mlx/parakeet/starling) instead of lumping
+        // all locals under one "On-device" bucket.
+        provider: engineLabel,
+        meta: `${engineLabel} · ${it.note ?? "On-device"}${sizeNote}`,
         recommended: it.key === recommendedKey,
         selected: it.selected && status === "ready",
         status,
@@ -572,12 +578,15 @@ function FilterBar({
   const providers: { id: string; label: string; mark?: string }[] = [];
   const seen = new Set<string>();
   for (const r of rows) {
-    if (r.source !== "cloud" || seen.has(r.provider)) continue;
+    if (seen.has(r.provider)) continue;
     seen.add(r.provider);
+    // Cloud rows use provider_ids (openai/groq/...) resolved via displayName;
+    // local rows carry their engine label directly (e.g. "On-device · Starling").
+    const isCloud = r.source === "cloud";
     providers.push({
       id: r.provider,
-      label: displayName(r.provider),
-      mark: PROVIDER_FILTER_MARKS[r.provider],
+      label: isCloud ? displayName(r.provider) : r.provider,
+      mark: isCloud ? PROVIDER_FILTER_MARKS[r.provider] : undefined,
     });
   }
 
@@ -811,7 +820,9 @@ function Progress({
           <span>
             {state?.phase === "building_binary"
               ? "Preparing runtime…"
-              : "Verifying…"}
+              : state?.phase === "starting_server"
+                ? "Starting server…"
+                : "Verifying…"}
           </span>
         )}
       </div>

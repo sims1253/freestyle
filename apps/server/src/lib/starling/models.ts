@@ -14,7 +14,11 @@ import {
   STARLING_MODELS,
   type StarlingModelDef,
 } from "./constants.js";
-import { isStarlingServerRunning, probeStarlingHealth } from "./server.js";
+import {
+  getStarlingRunningModelSlug,
+  isStarlingServerRunning,
+  probeStarlingHealth,
+} from "./server.js";
 
 export type StarlingModelStatus = "ready" | "not_ready" | "error";
 
@@ -27,33 +31,33 @@ export interface StarlingModelDownloadState {
 }
 
 /**
- * Whether the catalog entry is loadable right now. We treat the catalog model
- * as ready as soon as the server reports loaded; starling's server loads a
- * single bundled model, so any catalog entry resolves to the running server.
+ * Whether a catalog entry is loadable right now. One starling process serves
+ * exactly one model (its `--model` slug), so an entry is "ready" only when a
+ * server is loaded AND its reported model slug matches this entry's slug.
+ *
+ * For an externally-started server (freestyle didn't spawn it), we probe
+ * /health and match on the reported `model` field. A managed server's slug is
+ * tracked directly via getStarlingRunningModelSlug.
  */
 async function resolveStatus(
   model: StarlingModelDef,
 ): Promise<StarlingModelDownloadState> {
-  if (isStarlingServerRunning()) {
+  const managedSlug = getStarlingRunningModelSlug();
+  if (managedSlug) {
     return {
       model: model.id,
       displayName: model.displayName,
-      status: "ready",
+      status: managedSlug === model.slug ? "ready" : "not_ready",
     };
   }
   // Probe in case an external starling server is running on the configured port.
   const health = await probeStarlingHealth();
-  if (health?.status === "ok" && health.loaded) {
-    return {
-      model: model.id,
-      displayName: model.displayName,
-      status: "ready",
-    };
-  }
+  const externalMatch =
+    health?.status === "ok" && health.loaded && health.model === model.slug;
   return {
     model: model.id,
     displayName: model.displayName,
-    status: "not_ready",
+    status: externalMatch ? "ready" : "not_ready",
   };
 }
 

@@ -42,6 +42,9 @@ Thumbs.db
 apps/electron/tsconfig.web.tsbuildinfo
 apps/electron/tsconfig.node.tsbuildinfo
 
+# Electron packaging output (local builds — not tracked)
+apps/electron/dist2/
+
 # Compiled native binaries (built locally and in CI)
 apps/electron/resources/bin/
 

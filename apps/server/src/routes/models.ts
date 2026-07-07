@@ -20,7 +20,6 @@ import {
   STARLING_PROVIDER_ID,
   STARLING_PROVIDER_NAME,
 } from "../lib/starling/constants.js";
-import { getStarlingModelStatus } from "../lib/starling/models.js";
 import { canRunStarling } from "../lib/starling/server.js";
 import { stripProviderPrefix } from "../lib/streaming/types.js";
 import { isServerBinaryAvailable } from "../lib/whisper/binary.js";
@@ -462,16 +461,16 @@ const models = new Hono()
         }
       }
 
-      // Add local starling voice models (only when the server is reachable
-      // and its bundled model is loaded). Status is async — it probes /health.
+      // Add local starling voice models. Unlike whisper/parakeet/mlx, starling
+      // ships no weights to download — its "download" maps to starting the
+      // Python sidecar. So always surface the catalog when starling is
+      // configured (canRunStarling), even before the server is up: the picker
+      // renders a Start action in the not-ready state, which breaks the
+      // chicken-and-egg where you'd need the server running just to select it.
       if (canRunStarling()) {
-        for (const starlingModel of LOCAL_STARLING_VOICE_MODELS) {
-          const modelId = starlingModel.model_id.split("/")[1];
-          const status = await getStarlingModelStatus(modelId);
-          if (status?.status === "ready") {
-            available.push({ ...starlingModel, curated: true });
-          }
-        }
+        available.push(
+          ...LOCAL_STARLING_VOICE_MODELS.map((m) => ({ ...m, curated: true })),
+        );
       }
 
       try {

@@ -15,7 +15,9 @@ import {
   findStarlingPython,
   getStarlingPhase,
   getStarlingQueueDepth,
+  getStarlingRunningModelSlug,
   getStarlingServerBaseUrl,
+  getStarlingStartError,
   isStarlingServerFailed,
   isStarlingServerRunning,
   startStarlingInBackground,
@@ -54,6 +56,10 @@ const starling = new Hono()
       baseUrl: getStarlingServerBaseUrl(),
       serverRunning: isStarlingServerRunning(),
       serverFailed: isStarlingServerFailed(),
+      /** Why the last start failed (spawn error, timeout, etc.), if known. */
+      startError: getStarlingStartError(),
+      /** Slug of the model the running server has loaded (granite/parakeet/...). */
+      runningModelSlug: getStarlingRunningModelSlug(),
       /** Lifecycle phase from /health: unloaded/loading_weights/warming_up/ready. */
       phase: getStarlingPhase(),
       /** Requests queued for the GPU worker (null when server not managed). */
@@ -64,8 +70,7 @@ const starling = new Hono()
       models: await getAllStarlingModelStatuses(),
       modelDefinitions: getStarlingCatalogModels().map((m) => ({
         id: m.id,
-        serverModule: m.serverModule,
-        modelArg: m.modelArg ?? null,
+        slug: m.slug,
         displayName: m.displayName,
         family: m.family,
         speed: m.speed,
@@ -93,8 +98,9 @@ const starling = new Hono()
     startStarlingInBackground(modelId);
     return c.json({ ok: true, message: "Server start requested" });
   })
-  .post("/models/:model/cancel", (c) => {
-    // No download to cancel; no-op for API compatibility with the model card.
+  .post("/models/:model/cancel", async (c) => {
+    // For starling "cancel" = stop a server that's still starting up or idle.
+    await stopStarlingServer().catch(() => undefined);
     return c.json({ ok: true });
   })
   .delete("/models/:model", (c) => {

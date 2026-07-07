@@ -325,6 +325,25 @@ export function useModels(): UseModels {
     return () => clearInterval(interval);
   }, [parakeetStatus, loadParakeetStatus, loadData]);
 
+  // Poll starling status while the server is starting up. Starling has no
+  // weights download — its "start" spawns a Python process whose CUDA model
+  // load takes 1-3 minutes, so poll the phase/ready state until it settles.
+  useEffect(() => {
+    const starting =
+      starlingStatus?.canRun &&
+      !starlingStatus?.serverRunning &&
+      !starlingStatus?.serverFailed;
+    if (!starting) return;
+    const interval = setInterval(() => {
+      loadStarlingStatus().then((data) => {
+        if (data && (data.serverRunning || data.serverFailed)) {
+          loadData();
+        }
+      });
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [starlingStatus, loadStarlingStatus, loadData]);
+
   // -------------------------------------------------------------------------
   // Derived state
   // -------------------------------------------------------------------------
