@@ -83,6 +83,8 @@ declare global {
       onHotkeyError: (
         callback: (error: { message: string }) => void,
       ) => () => void;
+      // Open a path in the OS file manager (used by audio-backup folder open).
+      openPath: (path: string) => Promise<string>;
       // Audio level stream
       sendAudioLevel: (level: number) => void;
       onAudioLevel: (callback: (level: number) => void) => () => void;

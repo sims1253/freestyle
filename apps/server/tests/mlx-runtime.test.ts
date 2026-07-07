@@ -136,6 +136,10 @@ async function importRuntime() {
 beforeEach(() => {
   homeDir = mkdtempSync(join(tmpdir(), "freestyle-mlx-runtime-"));
   process.env.HOME = homeDir;
+  // Node's os.homedir() reads USERPROFILE on Windows and HOME everywhere else,
+  // so set both to keep the runtime's cache paths pointed at the temp dir
+  // regardless of which platform the test runs on.
+  process.env.USERPROFILE = homeDir;
   delete process.env.FREESTYLE_MLX_ASR_RELEASE_TAG;
   delete process.env.FREESTYLE_MLX_ASR_WORKER_URL;
   delete process.env.FREESTYLE_MLX_ASR_WORKER_VERSION;

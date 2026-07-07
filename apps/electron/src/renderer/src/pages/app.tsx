@@ -1100,14 +1100,16 @@ export default function AppPage(): React.JSX.Element {
         {activeFormatLabel && state !== "idle" && (
           <span
             className="mono"
-            style={{
-              fontSize: 9,
-              letterSpacing: "0.1em",
-              textTransform: "uppercase" as const,
-              color: "var(--primary)",
-              opacity: 0.8,
-              WebkitAppRegion: "no-drag",
-            }}
+            style={
+              {
+                fontSize: 9,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase" as const,
+                color: "var(--primary)",
+                opacity: 0.8,
+                WebkitAppRegion: "no-drag",
+              } as React.CSSProperties
+            }
           >
             {activeFormatLabel}
           </span>
