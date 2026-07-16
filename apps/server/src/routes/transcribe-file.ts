@@ -1,11 +1,15 @@
 import { sanitizeTranscriptText } from "@freestyle-voice/stt";
 import { createAppLogger } from "@freestyle-voice/utils";
 import { Hono } from "hono";
+import { saveAudioBackup } from "../lib/audio-backup.js";
 import {
   FreestyleCloudAuthError,
   FreestyleCloudUsageError,
 } from "../lib/freestyle-cloud.js";
-import { saveProcessedHistory } from "../lib/history-store.js";
+import {
+  getLastHistoryId,
+  saveProcessedHistory,
+} from "../lib/history-store.js";
 import { getLanguageSetting } from "../lib/language.js";
 import { postProcess } from "../lib/post-process.js";
 import { capture } from "../lib/posthog.js";
@@ -71,12 +75,32 @@ const transcribeFile = new Hono().post("/", async (c) => {
     if (error instanceof FreestyleCloudUsageError) {
       return c.json({ error: "usage_exceeded", resetsAt: error.resetsAt }, 429);
     }
-    throw error;
+    log.error(
+      `File cleanup failed; delivering raw transcript: ${String(error)}`,
+    );
+    const historyId = saveProcessedHistory({
+      rawText: raw,
+      cleanedText: null,
+      voiceProvider: STARLING_PROVIDER_ID,
+      voiceModel,
+      durationMs: Date.now() - start,
+      audioDurationMs,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+    });
+    if (historyId) saveAudioBackup(getLastHistoryId(), audio);
+    return c.json({
+      raw,
+      cleaned: raw,
+      cleanupFailed: true,
+      cleanupError: error instanceof Error ? error.message : String(error),
+    });
   }
 
   const durationMs = Date.now() - start;
   try {
-    saveProcessedHistory({
+    const historyId = saveProcessedHistory({
       rawText: raw,
       cleanedText: processed.cleaned !== raw ? processed.cleaned : null,
       voiceProvider: STARLING_PROVIDER_ID,
@@ -89,6 +113,7 @@ const transcribeFile = new Hono().post("/", async (c) => {
       outputTokens: processed.outputTokens,
       costUsd: processed.costUsd,
     });
+    if (historyId) saveAudioBackup(getLastHistoryId(), audio);
   } catch (error) {
     log.error(`Failed to save file transcription history: ${String(error)}`);
   }

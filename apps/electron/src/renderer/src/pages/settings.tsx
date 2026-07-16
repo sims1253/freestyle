@@ -137,6 +137,7 @@ export default function SettingsPage(): React.JSX.Element {
     "never" | "7" | "30" | "custom"
   >("never");
   const [customRetentionDays, setCustomRetentionDays] = useState("90");
+  const [audioBackupRetentionDays, setAudioBackupRetentionDays] = useState("7");
   const [audioPlaybackMode, setAudioPlaybackMode] =
     useState<AudioPlaybackMode>("off");
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
@@ -349,6 +350,8 @@ export default function SettingsPage(): React.JSX.Element {
         setCustomRetentionDays(String(retentionDays));
       }
     }
+    if (s.audio_backup_retention_days)
+      setAudioBackupRetentionDays(s.audio_backup_retention_days);
 
     // Audio playback mode with legacy fallback chain (new key → paused → duck).
     if (s.audio_playback_mode) {
@@ -599,6 +602,15 @@ export default function SettingsPage(): React.JSX.Element {
     [saveHistoryRetention],
   );
 
+  const saveAudioBackupRetention = useCallback((value: string) => {
+    const days = String(Math.max(1, Math.min(365, Number(value) || 7)));
+    setAudioBackupRetentionDays(days);
+    void getClient().api.settings[":key"].$put({
+      param: { key: "audio_backup_retention_days" },
+      json: { value: days },
+    });
+  }, []);
+
   const handleStreamingAudioToggle = useCallback(
     (enabled: boolean) => {
       setStreamingAudio(enabled);
@@ -735,6 +747,25 @@ export default function SettingsPage(): React.JSX.Element {
                 desc={t("settings.interfaceLanguage.desc")}
               >
                 <LanguageSelector />
+              </Row>
+              <Row
+                label="Audio backup retention"
+                desc="Keep recorded WAV files for reprocessing, then remove them automatically."
+              >
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min="1"
+                    max="365"
+                    value={audioBackupRetentionDays}
+                    onChange={(event) =>
+                      saveAudioBackupRetention(event.target.value)
+                    }
+                    className="w-16 text-center"
+                    aria-label="Audio backup retention days"
+                  />
+                  <span className="text-muted-foreground text-xs">days</span>
+                </div>
               </Row>
               <Row
                 label={t("settings.application.autoUpdate")}

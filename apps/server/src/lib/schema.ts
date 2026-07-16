@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 // Legacy default format-rule patterns (used only by pre-v12 migrations below):
 // domain/phrase entries match as substrings of url+title+app; bare words match
@@ -424,6 +424,16 @@ function applyMigrations(db: DatabaseSync, currentVersion: number): void {
       ).run();
     } catch {
       // A partial legacy migration may not have created model_configs yet.
+    }
+  }
+
+  if (currentVersion < 16) {
+    try {
+      db.exec(
+        "ALTER TABLE transcription_history ADD COLUMN audio_file_path TEXT",
+      );
+    } catch {
+      // Column may already exist in a partially ported install.
     }
   }
 

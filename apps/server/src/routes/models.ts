@@ -380,7 +380,10 @@ const models = new Hono()
     const body = c.req.valid("json");
 
     // If setting as default, unset any existing default for this type
-    if (body.is_default) {
+    const isDefault =
+      body.is_default ||
+      (body.type === "voice" && body.provider === "local-starling");
+    if (isDefault) {
       db.prepare("UPDATE model_configs SET is_default = 0 WHERE type = ?").run(
         body.type,
       );
@@ -399,7 +402,7 @@ const models = new Hono()
         body.model_id,
         body.model_name,
         body.type,
-        body.is_default ? 1 : 0,
+        isDefault ? 1 : 0,
       );
 
     capture("model configured", {

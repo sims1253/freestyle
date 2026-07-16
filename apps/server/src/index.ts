@@ -8,6 +8,7 @@ import { logger } from "hono/logger";
 import { requestId } from "hono/request-id";
 import { timeout } from "hono/timeout";
 import { WebSocketServer } from "ws";
+import { cleanupOldAudioBackups } from "./lib/audio-backup.js";
 import { formatError } from "./lib/format-error.js";
 import { isTransientCloudError } from "./lib/freestyle-cloud.js";
 import { startHistoryRetentionSweep } from "./lib/history-store.js";
@@ -185,6 +186,22 @@ export async function startServer(
   const app = createApp();
 
   startHistoryRetentionSweep();
+  // Audio backups are independent of history retention: retain them for the
+  // configured reprocessing window and sweep stale files every six hours.
+  try {
+    cleanupOldAudioBackups();
+  } catch (error) {
+    httpLog.warn(`Audio backup cleanup failed: ${String(error)}`);
+  }
+  const audioBackupSweep = setInterval(
+    () => {
+      try {
+        cleanupOldAudioBackups();
+      } catch {}
+    },
+    6 * 60 * 60_000,
+  );
+  audioBackupSweep.unref();
 
   return new Promise((resolve, reject) => {
     const wss = new WebSocketServer({ noServer: true });

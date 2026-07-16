@@ -41,6 +41,7 @@ import {
   Filter,
   FlaskConical,
   PanelRight,
+  RefreshCw,
   Search,
   Sparkles,
   Trash2,
@@ -66,6 +67,7 @@ interface HistoryEntry {
   output_tokens: number;
   cost_usd: number;
   created_at: string;
+  audio_file_path: string | null;
 }
 
 interface Stats {
@@ -347,6 +349,7 @@ export default function HistoryPage(): React.JSX.Element {
       output_tokens: 12,
       cost_usd: 0,
       created_at: new Date().toISOString().replace("T", " ").slice(0, 19),
+      audio_file_path: null,
     };
   }, [endDate, search, startDate, todayStr]);
   const hasDevSeedEntry = apiEntries.length === 0 && devSeedEntry !== null;
@@ -398,6 +401,20 @@ export default function HistoryPage(): React.JSX.Element {
       await getClient().api.history[":id"].$delete({
         param: { id: String(id) },
       });
+      void invalidate();
+    },
+    [invalidate],
+  );
+
+  const reprocessEntry = useCallback(
+    async (id: number) => {
+      const response = await fetch(
+        `${getClient().api.history.$url().href}/${id}/reprocess`,
+        {
+          method: "POST",
+        },
+      );
+      if (!response.ok) throw new Error("Could not reprocess this recording.");
       void invalidate();
     },
     [invalidate],
@@ -581,6 +598,7 @@ export default function HistoryPage(): React.JSX.Element {
                           key={entry.id}
                           entry={entry}
                           onDelete={deleteEntry}
+                          onReprocess={reprocessEntry}
                           diffMode={diffMode}
                           showAiEdits={showAiEdits}
                           nerdMode={nerdMode}
@@ -990,12 +1008,14 @@ function FeedGroup({
 const FeedItem = memo(function FeedItem({
   entry,
   onDelete,
+  onReprocess,
   diffMode,
   showAiEdits,
   nerdMode,
 }: {
   entry: HistoryEntry;
   onDelete: (id: number) => void;
+  onReprocess: (id: number) => Promise<void>;
   // Global view toggles driven from the filter panel.
   diffMode: boolean;
   showAiEdits: boolean;
@@ -1003,6 +1023,7 @@ const FeedItem = memo(function FeedItem({
 }): React.JSX.Element {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
   const hasAiEdit =
     !!entry.cleaned_text && entry.cleaned_text.trim() !== entry.raw_text.trim();
   const showDiff = diffMode && hasAiEdit;
@@ -1048,6 +1069,14 @@ const FeedItem = memo(function FeedItem({
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }, [text]);
+  const reprocess = useCallback(async () => {
+    setReprocessing(true);
+    try {
+      await onReprocess(entry.id);
+    } finally {
+      setReprocessing(false);
+    }
+  }, [entry.id, onReprocess]);
 
   return (
     <div className="group px-1.5 py-3.5">
@@ -1067,6 +1096,20 @@ const FeedItem = memo(function FeedItem({
         {/* Copy/delete sit before the duration so the actions don't leave a
             reserved blank at the far-right edge when not hovering. */}
         <div className="mr-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          {entry.audio_file_path && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => void reprocess()}
+              disabled={reprocessing}
+              title="Reprocess recording"
+              aria-label="Reprocess recording"
+            >
+              <RefreshCw
+                className={reprocessing ? "animate-spin" : undefined}
+              />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon-xs"

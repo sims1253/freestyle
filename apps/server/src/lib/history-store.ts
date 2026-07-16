@@ -80,7 +80,7 @@ export function stopHistoryRetentionSweep(): void {
 export function saveRawHistory(entry: RawHistoryEntry): boolean {
   if (isHistoryPaused()) return false;
 
-  getDb()
+  const result = getDb()
     .prepare(
       `INSERT INTO transcription_history
          (raw_text, voice_provider, voice_model, duration_ms, audio_duration_ms)
@@ -94,13 +94,13 @@ export function saveRawHistory(entry: RawHistoryEntry): boolean {
       entry.audioDurationMs,
     );
 
-  return true;
+  return result.changes > 0;
 }
 
 export function saveProcessedHistory(entry: ProcessedHistoryEntry): boolean {
   if (isHistoryPaused()) return false;
 
-  getDb()
+  const result = getDb()
     .prepare(
       `INSERT INTO transcription_history
          (raw_text, cleaned_text, voice_provider, voice_model, llm_provider, llm_model, duration_ms, audio_duration_ms, input_tokens, output_tokens, cost_usd)
@@ -120,5 +120,11 @@ export function saveProcessedHistory(entry: ProcessedHistoryEntry): boolean {
       entry.costUsd,
     );
 
-  return true;
+  return result.changes > 0;
+}
+
+export function getLastHistoryId(): number {
+  return (
+    getDb().prepare("SELECT last_insert_rowid() AS id").get() as { id: number }
+  ).id;
 }
