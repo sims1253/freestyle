@@ -73,22 +73,27 @@ export interface MlxAsrStatus {
   setupHint: string | null;
 }
 
+export interface StarlingModelDownloadState {
+  downloaded: boolean;
+  downloading: boolean;
+  progress: number;
+  error: string | null;
+}
+
+export interface StarlingStatus {
+  canRun: boolean;
+  blockedReason: string | null;
+  startError: string | null;
+  modelDownloads: Record<string, StarlingModelDownloadState>;
+}
+
 export const FREESTYLE_CLOUD_PROVIDER_ID = "freestyle-cloud";
 export const FREESTYLE_CLOUD_MODEL_ID = "freestyle-cloud/stt";
 
-export const CLOUD_VOICE_PROVIDERS = [
-  FREESTYLE_CLOUD_PROVIDER_ID,
-  "openai",
-  "groq",
-  "deepgram",
-  "elevenlabs",
-];
+/** Starling is an on-device engine; it never requires a provider API key. */
+export const LOCAL_VOICE_PROVIDERS = ["local-starling"];
 
-export const VOICE_PROVIDERS = [
-  ...CLOUD_VOICE_PROVIDERS,
-  "local-whisper",
-  "local-mlx",
-];
+export const VOICE_PROVIDERS = [...LOCAL_VOICE_PROVIDERS];
 
 export const LLM_PROVIDERS = [
   FREESTYLE_CLOUD_PROVIDER_ID,
@@ -97,6 +102,7 @@ export const LLM_PROVIDERS = [
   "google",
   "groq",
   "mistral",
+  "zai",
   "local-llm",
 ];
 
@@ -105,14 +111,12 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   anthropic: "Anthropic",
   google: "Google",
   groq: "Groq",
-  deepgram: "Deepgram",
-  elevenlabs: "ElevenLabs",
   mistral: "Mistral",
+  zai: "Z.ai",
   openrouter: "OpenRouter",
   "freestyle-cloud": "Freestyle Transcribe",
   "local-llm": "Local LLM",
-  "local-whisper": "Local Whisper",
-  "local-mlx": "Local MLX",
+  "local-starling": "Local Starling",
 };
 
 /** Where to create an API key, linked from the key-entry views. */
@@ -121,9 +125,11 @@ export const PROVIDER_KEY_URLS: Record<string, string> = {
   groq: "https://console.groq.com/keys",
   deepgram: "https://console.deepgram.com",
   elevenlabs: "https://elevenlabs.io/app/settings/api-keys",
+  soniox: "https://console.soniox.com",
   anthropic: "https://console.anthropic.com/settings/keys",
   google: "https://aistudio.google.com/apikey",
   mistral: "https://console.mistral.ai/api-keys",
+  zai: "https://z.ai/manage-apikey/apikey-list",
 };
 
 export function displayProviderName(
@@ -163,6 +169,7 @@ export interface VoiceItem {
   state?: WhisperModelDownloadState;
   status?: WhisperModelDownloadState["status"];
   cost?: number;
+  streaming?: boolean;
   hasKey?: boolean;
   available?: AvailableModel;
 }
@@ -173,6 +180,7 @@ export const VOICE_META: Record<
     speed: number;
     quality: number;
     cost?: number;
+    streaming?: boolean;
     note?: string;
   }
 > = {
@@ -205,6 +213,12 @@ export const VOICE_META: Record<
     quality: 4,
     cost: 0.4,
     note: "Excellent across 99 languages",
+  },
+  "soniox/stt-rt-v4": {
+    speed: 5,
+    quality: 5,
+    cost: 0.12,
+    note: "Fast multilingual streaming",
   },
 };
 
@@ -347,11 +361,14 @@ export function buildVoiceItems(
       speed: meta?.speed,
       quality: meta?.quality,
       cost: meta?.cost,
+      streaming: meta?.streaming,
       note: meta?.note,
       hasKey:
-        m.provider_id === FREESTYLE_CLOUD_PROVIDER_ID
-          ? !!ctx.cloudSignedIn
-          : ctx.keyProviders.has(m.provider_id),
+        m.provider_id === "local-starling"
+          ? true
+          : m.provider_id === FREESTYLE_CLOUD_PROVIDER_ID
+            ? !!ctx.cloudSignedIn
+            : ctx.keyProviders.has(m.provider_id),
       available: m,
       selected:
         ctx.selectedProvider === m.provider_id &&

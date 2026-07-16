@@ -1,6 +1,16 @@
+import { readFileSync } from "node:fs";
+import { sanitizeTranscriptText } from "@freestyle-voice/stt";
+import { historyQuerySchema } from "@freestyle-voice/validations";
+import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
+import { deleteAudioBackup } from "../lib/audio-backup.js";
 import { getDb } from "../lib/db.js";
+import { getLanguageSetting } from "../lib/language.js";
+import { postProcess } from "../lib/post-process.js";
 import { capture } from "../lib/posthog.js";
+import { getDefaultModels } from "../lib/providers.js";
+import { transcribeWithStarling } from "../lib/starling/server.js";
+import { stripProviderPrefix } from "../lib/streaming/types.js";
 
 interface HistoryRow {
   id: number;
@@ -16,6 +26,7 @@ interface HistoryRow {
   output_tokens: number;
   cost_usd: number;
   created_at: string;
+  audio_file_path: string | null;
 }
 
 const ALLOWED_ORDER_COLUMNS = new Set([
@@ -24,31 +35,29 @@ const ALLOWED_ORDER_COLUMNS = new Set([
   "cost_usd",
 ]);
 
-const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
 const history = new Hono()
-  .get("/", (c) => {
+  .get("/", zValidator("query", historyQuerySchema), (c) => {
     const db = getDb();
-    const limit = Math.min(Number(c.req.query("limit") || 50), 200);
-    const offset = Number(c.req.query("offset") || 0);
-    const search = c.req.query("search")?.trim() || "";
-    const start_date_param = c.req.query("start_date");
-    const end_date_param = c.req.query("end_date");
-    const start_date =
-      start_date_param && DATE_REGEX.test(start_date_param)
-        ? start_date_param
-        : null;
-    const end_date =
-      end_date_param && DATE_REGEX.test(end_date_param) ? end_date_param : null;
-    const orderByParam = c.req.query("orderBy") || "-created_at";
+    const {
+      limit,
+      offset,
+      search: rawSearch,
+      orderBy,
+      start_date = null,
+      end_date = null,
+    } = c.req.valid("query");
+    const search = rawSearch?.trim() || "";
 
-    // Parse orderBy: "-created_at" means DESC, "created_at" means ASC
-    const desc = orderByParam.startsWith("-");
-    const column = desc ? orderByParam.slice(1) : orderByParam;
-    const orderColumn = ALLOWED_ORDER_COLUMNS.has(column)
-      ? column
-      : "created_at";
-    const orderDir = desc ? "DESC" : "ASC";
+    const orderColumn =
+      orderBy && ALLOWED_ORDER_COLUMNS.has(orderBy.column)
+        ? orderBy.column
+        : "created_at";
+    // Default ordering (no orderBy param) is newest-first.
+    const orderDir = orderBy
+      ? orderBy.order === "desc"
+        ? "DESC"
+        : "ASC"
+      : "DESC";
 
     // Dynamically build WHERE conditions
     const conditions: string[] = [];
@@ -92,15 +101,11 @@ const history = new Hono()
       offset,
     });
   })
-  .get("/stats", (c) => {
+  .get("/stats", zValidator("query", historyQuerySchema), (c) => {
     const db = getDb();
 
-    const startDateParam = c.req.query("start_date");
-    const endDateParam = c.req.query("end_date");
-    const startDate =
-      startDateParam && DATE_REGEX.test(startDateParam) ? startDateParam : null;
-    const endDate =
-      endDateParam && DATE_REGEX.test(endDateParam) ? endDateParam : null;
+    const { start_date: startDate = null, end_date: endDate = null } =
+      c.req.valid("query");
 
     const conditions: string[] = [];
     const params: string[] = [];
@@ -180,17 +185,84 @@ const history = new Hono()
   .delete("/:id", (c) => {
     const db = getDb();
     const id = Number(c.req.param("id"));
+    const row = db
+      .prepare("SELECT audio_file_path FROM transcription_history WHERE id = ?")
+      .get(id) as { audio_file_path: string | null } | undefined;
+    if (row?.audio_file_path) deleteAudioBackup(row.audio_file_path);
     db.prepare("DELETE FROM transcription_history WHERE id = ?").run(id);
     return c.json({ ok: true });
   })
   .delete("/", (c) => {
     const db = getDb();
+    const audioRows = db
+      .prepare(
+        "SELECT audio_file_path FROM transcription_history WHERE audio_file_path IS NOT NULL",
+      )
+      .all() as { audio_file_path: string }[];
+    for (const row of audioRows) deleteAudioBackup(row.audio_file_path);
     const countRow = db
       .prepare("SELECT COUNT(*) as count FROM transcription_history")
       .get() as { count: number };
     db.exec("DELETE FROM transcription_history");
     capture("history cleared", { deleted_count: countRow.count });
     return c.json({ ok: true });
+  })
+  .post("/:id/reprocess", async (c) => {
+    const db = getDb();
+    const id = Number(c.req.param("id"));
+    const row = db
+      .prepare("SELECT * FROM transcription_history WHERE id = ?")
+      .get(id) as HistoryRow | undefined;
+    if (!row) return c.json({ error: "Not found" }, 404);
+    if (!row.audio_file_path)
+      return c.json({ error: "No audio backup available" }, 400);
+
+    let audio: Uint8Array;
+    try {
+      audio = new Uint8Array(readFileSync(row.audio_file_path));
+    } catch {
+      return c.json({ error: "Audio backup not found" }, 404);
+    }
+    const voice = getDefaultModels().voice;
+    if (!voice || voice.provider !== "local-starling") {
+      return c.json({ error: "No Local Starling voice model configured" }, 400);
+    }
+    try {
+      const result = await transcribeWithStarling({
+        modelId: stripProviderPrefix(voice.model_id),
+        audio,
+      });
+      const raw = sanitizeTranscriptText(result.text);
+      const processed = await postProcess(raw, null, {
+        language: getLanguageSetting(),
+        source: "batch",
+      });
+      db.prepare(
+        `UPDATE transcription_history SET raw_text = ?, cleaned_text = ?,
+         voice_provider = ?, voice_model = ?, llm_provider = ?, llm_model = ?,
+         input_tokens = ?, output_tokens = ?, cost_usd = ? WHERE id = ?`,
+      ).run(
+        raw,
+        processed.cleaned !== raw ? processed.cleaned : null,
+        voice.provider,
+        voice.model_id,
+        processed.llmProvider,
+        processed.llmModel,
+        processed.inputTokens,
+        processed.outputTokens,
+        processed.costUsd,
+        id,
+      );
+      return c.json({ raw, cleaned: processed.cleaned });
+    } catch (error) {
+      return c.json(
+        {
+          error: "Reprocessing failed",
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        500,
+      );
+    }
   });
 
 export default history;

@@ -10,6 +10,7 @@ export const SETTINGS_KEYS = {
   hotkey: "hotkey",
   hotkeyMode: "hotkey_mode",
   historyPaused: "history_paused",
+  historyRetentionDays: "history_retention_days",
   language: "language",
   llmCleanup: "llm_cleanup",
   localLlmApiKey: "local_llm_api_key",
@@ -20,8 +21,14 @@ export const SETTINGS_KEYS = {
   networkProxyUrl: "network_proxy_url",
   outputMode: "output_mode",
   soundEnabled: "sound_enabled",
+  starlingHost: "starling_host",
+  starlingKeepAliveMinutes: "starling_keep_alive_minutes",
+  starlingKeepLoaded: "starling_keep_loaded",
+  starlingPort: "starling_port",
+  starlingProfile: "starling_profile",
+  starlingPythonPath: "starling_python_path",
+  starlingSourcePath: "starling_source_path",
   theme: "theme",
-  transcriptionPrompt: "transcription_prompt",
 } as const;
 
 export type SettingsKey = (typeof SETTINGS_KEYS)[keyof typeof SETTINGS_KEYS];

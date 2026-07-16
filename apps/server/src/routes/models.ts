@@ -1,29 +1,18 @@
+import { configureModelSchema } from "@freestyle-voice/validations";
+import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { getDb } from "../lib/db.js";
 import {
   FREESTYLE_CLOUD_CLEANUP_MODEL_ID,
   FREESTYLE_CLOUD_PROVIDER_ID,
-  FREESTYLE_CLOUD_TRANSCRIBE_MODEL_ID,
 } from "../lib/freestyle-cloud.js";
-import {
-  LEGACY_MLX_ASR_MODELS,
-  MLX_ASR_MODELS,
-  MLX_ASR_PROVIDER_ID,
-  MLX_ASR_PROVIDER_NAME,
-} from "../lib/mlx-asr/constants.js";
-import { getMlxModelStatus } from "../lib/mlx-asr/models.js";
-import { reconcileUnsupportedMlxVoiceDefault } from "../lib/mlx-asr/reconcile.js";
-import { canRunMlxAsr } from "../lib/mlx-asr/server.js";
 import { capture } from "../lib/posthog.js";
-import { stripProviderPrefix } from "../lib/streaming/types.js";
-import { isServerBinaryAvailable } from "../lib/whisper/binary.js";
 import {
-  LEGACY_WHISPER_MODELS,
-  WHISPER_MODELS,
-  WHISPER_PROVIDER_ID,
-} from "../lib/whisper/constants.js";
-import { getModelStatus } from "../lib/whisper/models.js";
-import { startInBackground } from "../lib/whisper/server.js";
+  STARLING_MODELS,
+  STARLING_PROVIDER_ID,
+  STARLING_PROVIDER_NAME,
+} from "../lib/starling/constants.js";
+import { canRunStarling } from "../lib/starling/server.js";
 
 interface AvailableModel {
   provider_id: string;
@@ -86,89 +75,19 @@ async function fetchLocalLlmModels(): Promise<AvailableModel[]> {
   }));
 }
 
-// Local voice models (curated + legacy that's still downloaded — the
-// /available handler filters to ready models, so legacy entries only
-// surface for installs that already have them on disk).
-const LOCAL_WHISPER_VOICE_MODELS: AvailableModel[] = [
-  ...WHISPER_MODELS,
-  ...LEGACY_WHISPER_MODELS,
-].map((m) => ({
-  provider_id: WHISPER_PROVIDER_ID,
-  provider_name: "Local Whisper",
-  model_id: `${WHISPER_PROVIDER_ID}/${m.id}`,
-  model_name: m.displayName,
-  family: "whisper-local",
-  type: "voice" as const,
-  cost_input: 0,
-  cost_output: 0,
-}));
-
-const LOCAL_MLX_VOICE_MODELS: AvailableModel[] = [
-  ...MLX_ASR_MODELS,
-  ...LEGACY_MLX_ASR_MODELS,
-].map((m) => ({
-  provider_id: MLX_ASR_PROVIDER_ID,
-  provider_name: MLX_ASR_PROVIDER_NAME,
-  model_id: `${MLX_ASR_PROVIDER_ID}/${m.id}`,
-  model_name: m.displayName,
-  family: m.family,
-  type: "voice" as const,
-  cost_input: 0,
-  cost_output: 0,
-}));
-
-// Curated cloud voice catalog: one flagship per provider. The models.dev
-// registry is deliberately NOT merged for voice — untested model noise.
-const BUILTIN_VOICE_MODELS: AvailableModel[] = [
-  {
-    provider_id: FREESTYLE_CLOUD_PROVIDER_ID,
-    provider_name: "Freestyle Transcribe",
-    model_id: FREESTYLE_CLOUD_TRANSCRIBE_MODEL_ID,
-    model_name: "Freestyle Transcribe",
-    family: "freestyle",
-    type: "voice",
-  },
-  {
-    provider_id: "openai",
-    provider_name: "OpenAI",
-    model_id: "openai/gpt-4o-transcribe",
-    model_name: "OpenAI Transcribe",
-    family: "whisper",
-    type: "voice",
-  },
-  {
-    provider_id: "groq",
-    provider_name: "Groq",
-    model_id: "groq/whisper-large-v3-turbo",
-    model_name: "Groq Whisper Turbo",
-    family: "whisper",
-    type: "voice",
-  },
-  {
-    provider_id: "groq",
-    provider_name: "Groq",
-    model_id: "groq/whisper-large-v3",
-    model_name: "Groq Whisper Large v3",
-    family: "whisper",
-    type: "voice",
-  },
-  {
-    provider_id: "deepgram",
-    provider_name: "Deepgram",
-    model_id: "deepgram/nova-3",
-    model_name: "Deepgram Nova 3",
-    family: "deepgram",
-    type: "voice",
-  },
-  {
-    provider_id: "elevenlabs",
-    provider_name: "ElevenLabs",
-    model_id: "elevenlabs/scribe_v2_realtime",
-    model_name: "ElevenLabs Scribe",
-    family: "elevenlabs",
-    type: "voice",
-  },
-];
+const LOCAL_STARLING_VOICE_MODELS: AvailableModel[] = STARLING_MODELS.map(
+  (m) => ({
+    provider_id: STARLING_PROVIDER_ID,
+    provider_name: STARLING_PROVIDER_NAME,
+    model_id: `${STARLING_PROVIDER_ID}/${m.id}`,
+    model_name: m.displayName,
+    family: m.family,
+    type: "voice" as const,
+    cost_input: 0,
+    cost_output: 0,
+    curated: true,
+  }),
+);
 
 // Cleanup-LLM providers the app can actually run (see lib/providers.ts).
 const SUPPORTED_LLM_PROVIDERS = new Set([
@@ -177,6 +96,7 @@ const SUPPORTED_LLM_PROVIDERS = new Set([
   "google",
   "groq",
   "mistral",
+  "zai",
 ]);
 
 // One fast-tier cleanup model per provider, surfaced by default; everything
@@ -191,6 +111,8 @@ const CURATED_LLM_IDS = new Set([
   "anthropic/claude-haiku-4-5",
   "google/gemini-2.5-flash",
   "mistral/mistral-small-latest",
+  "zai/glm-4.7",
+  "zai/glm-5.2",
 ]);
 
 const BUILTIN_LLM_MODELS: AvailableModel[] = [
@@ -211,6 +133,50 @@ const BUILTIN_LLM_MODELS: AvailableModel[] = [
     family: "mistral",
     type: "llm",
     curated: true,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.ai",
+    model_id: "glm-5.2",
+    model_name: "GLM-5.2",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.ai",
+    model_id: "glm-5-turbo",
+    model_name: "GLM-5-Turbo",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.ai",
+    model_id: "glm-4.7",
+    model_name: "GLM-4.7",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.ai",
+    model_id: "glm-4.5-air",
+    model_name: "GLM-4.5-Air",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
   },
 ];
 
@@ -271,6 +237,7 @@ export async function isCleanupModelSupported(
 ): Promise<boolean> {
   if (providerId === "local-llm") return true;
   if (providerId === FREESTYLE_CLOUD_PROVIDER_ID) return true;
+  if (providerId === "zai") return true;
 
   try {
     const registry = await fetchModelsFromRegistry();
@@ -371,29 +338,9 @@ const models = new Hono()
         if (!exists) available.push(model);
       }
 
-      // Curated cloud voice models
-      available.push(
-        ...BUILTIN_VOICE_MODELS.map((m) => ({ ...m, curated: true })),
-      );
-
-      // Add local whisper voice models (only those that are downloaded)
-      for (const whisperModel of LOCAL_WHISPER_VOICE_MODELS) {
-        const modelId = whisperModel.model_id.split("/")[1];
-        const status = getModelStatus(modelId);
-        if (status?.status === "ready") {
-          available.push({ ...whisperModel, curated: true });
-        }
-      }
-
-      if (canRunMlxAsr()) {
-        for (const mlxModel of LOCAL_MLX_VOICE_MODELS) {
-          const modelId = mlxModel.model_id.split("/")[1];
-          const status = getMlxModelStatus(modelId);
-          if (status?.status === "ready") {
-            available.push({ ...mlxModel, curated: true });
-          }
-        }
-      }
+      // Starling manages its model weights in the configured Python environment;
+      // there is no separate download status to wait for.
+      if (canRunStarling()) available.push(...LOCAL_STARLING_VOICE_MODELS);
 
       try {
         const localModels = await fetchLocalLlmModels();
@@ -412,7 +359,6 @@ const models = new Hono()
     }
   })
   .get("/configured", (c) => {
-    reconcileUnsupportedMlxVoiceDefault();
     const db = getDb();
     const rows = db
       .prepare(
@@ -429,25 +375,15 @@ const models = new Hono()
     }[];
     return c.json(rows);
   })
-  .post("/configured", async (c) => {
+  .post("/configured", zValidator("json", configureModelSchema), (c) => {
     const db = getDb();
-    const body = await c.req.json<{
-      provider: string;
-      model_id: string;
-      model_name: string;
-      type: "voice" | "llm";
-      is_default?: boolean;
-    }>();
-
-    if (!body.provider || !body.model_id || !body.model_name || !body.type) {
-      return c.json(
-        { error: "provider, model_id, model_name, and type are required" },
-        400,
-      );
-    }
+    const body = c.req.valid("json");
 
     // If setting as default, unset any existing default for this type
-    if (body.is_default) {
+    const isDefault =
+      body.is_default ||
+      (body.type === "voice" && body.provider === "local-starling");
+    if (isDefault) {
       db.prepare("UPDATE model_configs SET is_default = 0 WHERE type = ?").run(
         body.type,
       );
@@ -466,7 +402,7 @@ const models = new Hono()
         body.model_id,
         body.model_name,
         body.type,
-        body.is_default ? 1 : 0,
+        isDefault ? 1 : 0,
       );
 
     capture("model configured", {
@@ -505,16 +441,6 @@ const models = new Hono()
       provider: row.provider,
       model_id: row.model_id,
     });
-
-    // Pre-warm the local whisper server so the first transcription after a
-    // model switch doesn't pay the model-load latency.
-    if (
-      row.type === "voice" &&
-      row.provider === WHISPER_PROVIDER_ID &&
-      isServerBinaryAvailable()
-    ) {
-      startInBackground(stripProviderPrefix(row.model_id));
-    }
 
     return c.json({ ok: true });
   })

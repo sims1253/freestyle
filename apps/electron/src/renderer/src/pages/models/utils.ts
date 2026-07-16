@@ -56,7 +56,6 @@ export function groupByProvider(
   return map;
 }
 
-// Thin wrapper around the shared helper, passing settings-page context.
 export function buildSettingsVoiceItems(
   available: AvailableModel[],
   whisperStatus: WhisperStatus | null,

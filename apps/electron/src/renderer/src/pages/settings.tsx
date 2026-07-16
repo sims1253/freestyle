@@ -1,8 +1,11 @@
 import {
+  HISTORY_RETENTION_DAYS_MAX,
   type NetworkSettingsForm,
   networkSettingsFormSchema,
+  parseRetentionDays,
 } from "@freestyle-voice/validations";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { DragSpacer } from "@renderer/components/drag-spacer";
 import { KeyComboDisplay } from "@renderer/components/key-combo";
 import { LanguageSelector } from "@renderer/components/language-selector";
 import { Button } from "@renderer/components/ui/button";
@@ -26,11 +29,20 @@ import { getClient } from "@renderer/lib/api";
 import { LANGUAGES } from "@renderer/lib/languages";
 import { requestMicAccess, resolveMicStatus } from "@renderer/lib/permissions";
 import { IS_LINUX, IS_MAC, IS_WINDOWS } from "@renderer/lib/platform";
+import {
+  CONFIG_QUERY_KEY,
+  configQueryOptions,
+  type FreestyleConfig,
+  SETTINGS_QUERY_KEY,
+  settingsQueryOptions,
+} from "@renderer/lib/query";
 import { cn } from "@renderer/lib/utils";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   Download,
   ExternalLink,
+  FlaskConical,
   FolderOpen,
   Info,
   Keyboard,
@@ -82,6 +94,7 @@ const settingsSectionIds = [
   "permissions",
   "data",
   "network",
+  "experimental",
 ] as const;
 
 type SettingsSectionId = (typeof settingsSectionIds)[number];
@@ -120,9 +133,13 @@ export default function SettingsPage(): React.JSX.Element {
   const [pillPosition, setPillPosition] = useState("bottom-center");
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [historyPaused, setHistoryPaused] = useState(false);
+  const [historyRetention, setHistoryRetention] = useState<
+    "never" | "7" | "30" | "custom"
+  >("never");
+  const [customRetentionDays, setCustomRetentionDays] = useState("90");
+  const [audioBackupRetentionDays, setAudioBackupRetentionDays] = useState("7");
   const [audioPlaybackMode, setAudioPlaybackMode] =
     useState<AudioPlaybackMode>("off");
-  const [transcriptionPrompt, setTranscriptionPrompt] = useState("");
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -130,10 +147,10 @@ export default function SettingsPage(): React.JSX.Element {
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [launchAtStartup, setLaunchAtStartup] = useState(false);
   const [showOnLaunch, setShowOnLaunch] = useState(true);
+  const [streamingAudio, setStreamingAudio] = useState(false);
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(() =>
     parseSettingsSection(window.location.hash),
   );
-
   // Radix SelectItem cannot use an empty-string value, so the "system default"
   // microphone (stored as "") is represented by this sentinel at the Select
   // boundary only. Use an unlikely string to avoid colliding with a real
@@ -159,6 +176,16 @@ export default function SettingsPage(): React.JSX.Element {
         label:
           t(`settings.recording.transcriptionLanguages.${l.id}`) || l.label,
       })),
+    ],
+    [t],
+  );
+
+  const retentionOptions = useMemo(
+    () => [
+      { value: "never", label: t("settings.data.autoDeleteNever") },
+      { value: "7", label: t("settings.data.autoDelete7") },
+      { value: "30", label: t("settings.data.autoDelete30") },
+      { value: "custom", label: t("settings.data.autoDeleteCustom") },
     ],
     [t],
   );
@@ -289,6 +316,62 @@ export default function SettingsPage(): React.JSX.Element {
     cancelRecording: cancelHotkeyRecording,
   } = useHotkeyRecorder(handleHotkeyRecorded);
 
+  const queryClient = useQueryClient();
+
+  // All persisted settings in one request (replaces ~10 individual GETs).
+  const settingsQuery = useQuery(settingsQueryOptions());
+
+  // Seed local form state from the batch once it first resolves. Handlers
+  // persist changes directly, so we only seed once (guarded) to avoid
+  // clobbering edits if the query is later invalidated.
+  const settingsSeeded = useRef(false);
+  useEffect(() => {
+    const s = settingsQuery.data;
+    if (!s || settingsSeeded.current) return;
+    settingsSeeded.current = true;
+
+    if (s[SETTINGS_KEYS.micDeviceId])
+      setSelectedDevice(s[SETTINGS_KEYS.micDeviceId]);
+    if (s[SETTINGS_KEYS.hotkey]) setHotkey(s[SETTINGS_KEYS.hotkey]);
+    if (s[SETTINGS_KEYS.hotkeyMode] === "toggle") setHotkeyMode("toggle");
+    if (s[SETTINGS_KEYS.language]) setLanguage(s[SETTINGS_KEYS.language]);
+    if (s[SETTINGS_KEYS.outputMode]) setOutputMode(s[SETTINGS_KEYS.outputMode]);
+    if (s[SETTINGS_KEYS.soundEnabled] === "false") setSoundEnabled(false);
+    if (s[SETTINGS_KEYS.historyPaused] === "true") setHistoryPaused(true);
+
+    const retentionDays = parseRetentionDays(
+      s[SETTINGS_KEYS.historyRetentionDays],
+    );
+    if (retentionDays !== null) {
+      if (retentionDays === 7 || retentionDays === 30) {
+        setHistoryRetention(String(retentionDays) as "7" | "30");
+      } else {
+        setHistoryRetention("custom");
+        setCustomRetentionDays(String(retentionDays));
+      }
+    }
+    if (s.audio_backup_retention_days)
+      setAudioBackupRetentionDays(s.audio_backup_retention_days);
+
+    // Audio playback mode with legacy fallback chain (new key → paused → duck).
+    if (s.audio_playback_mode) {
+      setAudioPlaybackMode(normalizeAudioPlaybackMode(s.audio_playback_mode));
+    } else if (s.pause_playback_while_recording === "true") {
+      setAudioPlaybackMode("pause");
+    } else if (s.audio_ducking_enabled === "true") {
+      setAudioPlaybackMode("duck");
+    }
+  }, [settingsQuery.data]);
+
+  // Experimental flags from config.freestyle.json, cached alongside the rest of
+  // the settings page rather than re-fetched on every visit.
+  const configQuery = useQuery(configQueryOptions());
+  useEffect(() => {
+    if (configQuery.data) {
+      setStreamingAudio(configQuery.data.flags.streaming_audio === true);
+    }
+  }, [configQuery.data]);
+
   // Load available audio input devices
   useEffect(() => {
     (async () => {
@@ -311,104 +394,12 @@ export default function SettingsPage(): React.JSX.Element {
     })();
   }, []);
 
-  // Load saved settings from server
+  // Load window/IPC-backed settings and subscribe to auto-updater events.
+  // (Server-persisted settings are seeded from the batch query above.)
   useEffect(() => {
-    getClient()
-      .api.settings[":key"].$get({ param: { key: SETTINGS_KEYS.micDeviceId } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.value) setSelectedDevice(data.value);
-      })
-      .catch(() => {});
-    getClient()
-      .api.settings[":key"].$get({ param: { key: SETTINGS_KEYS.hotkey } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.value) setHotkey(data.value);
-      })
-      .catch(() => {});
-    getClient()
-      .api.settings[":key"].$get({ param: { key: SETTINGS_KEYS.hotkeyMode } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.value === "toggle") setHotkeyMode("toggle");
-      })
-      .catch(() => {});
-    getClient()
-      .api.settings[":key"].$get({ param: { key: SETTINGS_KEYS.language } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.value) setLanguage(data.value);
-      })
-      .catch(() => {});
-    getClient()
-      .api.settings[":key"].$get({ param: { key: SETTINGS_KEYS.outputMode } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.value) setOutputMode(data.value);
-      })
-      .catch(() => {});
     window.api
       ?.getPillPosition()
       .then((pos) => setPillPosition(normalizePillPos(pos)))
-      .catch(() => {});
-    getClient()
-      .api.settings[":key"].$get({ param: { key: SETTINGS_KEYS.soundEnabled } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.value === "false") setSoundEnabled(false);
-      })
-      .catch(() => {});
-    getClient()
-      .api.settings[":key"].$get({
-        param: { key: SETTINGS_KEYS.historyPaused },
-      })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.value === "true") setHistoryPaused(true);
-      })
-      .catch(() => {});
-    void (async () => {
-      try {
-        const modeResponse = await getClient().api.settings[":key"].$get({
-          param: { key: "audio_playback_mode" },
-        });
-        const modeData = modeResponse.ok ? await modeResponse.json() : null;
-        if (modeData?.value) {
-          setAudioPlaybackMode(normalizeAudioPlaybackMode(modeData.value));
-          return;
-        }
-
-        const legacyPauseResponse = await getClient().api.settings[":key"].$get(
-          {
-            param: { key: "pause_playback_while_recording" },
-          },
-        );
-        const legacyPauseData = legacyPauseResponse.ok
-          ? await legacyPauseResponse.json()
-          : null;
-        if (legacyPauseData?.value === "true") {
-          setAudioPlaybackMode("pause");
-          return;
-        }
-
-        const legacyDuckResponse = await getClient().api.settings[":key"].$get({
-          param: { key: "audio_ducking_enabled" },
-        });
-        const legacyDuckData = legacyDuckResponse.ok
-          ? await legacyDuckResponse.json()
-          : null;
-        setAudioPlaybackMode(legacyDuckData?.value === "true" ? "duck" : "off");
-      } catch {}
-    })();
-    getClient()
-      .api.settings[":key"].$get({
-        param: { key: SETTINGS_KEYS.transcriptionPrompt },
-      })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.value) setTranscriptionPrompt(data.value);
-      })
       .catch(() => {});
     // Auto-update setting
     window.api
@@ -546,7 +537,9 @@ export default function SettingsPage(): React.JSX.Element {
       return;
     }
     await getClient().api.history.$delete();
-  }, [t]);
+    void queryClient.invalidateQueries({ queryKey: ["history"] });
+    void queryClient.invalidateQueries({ queryKey: ["today-history"] });
+  }, [t, queryClient]);
 
   const handleSoundToggle = useCallback((enabled: boolean) => {
     setSoundEnabled(enabled);
@@ -567,6 +560,77 @@ export default function SettingsPage(): React.JSX.Element {
       })
       .catch(() => {});
   }, []);
+
+  const saveHistoryRetention = useCallback((days: string) => {
+    getClient()
+      .api.settings[":key"].$put({
+        param: { key: SETTINGS_KEYS.historyRetentionDays },
+        json: { value: days },
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleHistoryRetentionChange = useCallback(
+    (value: string) => {
+      const preset = value as "never" | "7" | "30" | "custom";
+      setHistoryRetention(preset);
+      if (preset === "never") {
+        saveHistoryRetention("");
+      } else if (preset === "custom") {
+        if (parseRetentionDays(customRetentionDays) !== null) {
+          saveHistoryRetention(customRetentionDays);
+        }
+      } else {
+        saveHistoryRetention(preset);
+      }
+    },
+    [customRetentionDays, saveHistoryRetention],
+  );
+
+  const handleCustomRetentionDaysChange = useCallback(
+    (raw: string) => {
+      const digits = raw.replace(/\D/g, "").slice(0, 4);
+      const clamped =
+        digits === ""
+          ? ""
+          : String(Math.min(Number(digits), HISTORY_RETENTION_DAYS_MAX));
+      setCustomRetentionDays(clamped);
+      if (parseRetentionDays(clamped) !== null) {
+        saveHistoryRetention(clamped);
+      }
+    },
+    [saveHistoryRetention],
+  );
+
+  const saveAudioBackupRetention = useCallback((value: string) => {
+    const days = String(Math.max(1, Math.min(365, Number(value) || 7)));
+    setAudioBackupRetentionDays(days);
+    void getClient().api.settings[":key"].$put({
+      param: { key: "audio_backup_retention_days" },
+      json: { value: days },
+    });
+  }, []);
+
+  const handleStreamingAudioToggle = useCallback(
+    (enabled: boolean) => {
+      setStreamingAudio(enabled);
+      window.api?.sendStreamingAudioChanged(enabled);
+      getClient()
+        .api.config.flags[":key"].$put({
+          param: { key: "streaming_audio" },
+          json: { value: enabled },
+        })
+        .then(() => {
+          queryClient.setQueryData<FreestyleConfig>(CONFIG_QUERY_KEY, (prev) =>
+            prev
+              ? { ...prev, flags: { ...prev.flags, streaming_audio: enabled } }
+              : prev,
+          );
+        })
+        .catch(() => {});
+    },
+    [queryClient],
+  );
 
   const handleAudioPlaybackModeChange = useCallback((value: string) => {
     const mode = normalizeAudioPlaybackMode(value);
@@ -599,13 +663,13 @@ export default function SettingsPage(): React.JSX.Element {
 
   const positionOptions = useMemo<SegmentOption[]>(() => {
     const opts: SegmentOption[] = [
+      { id: "top-center", label: t("settings.display.positionTopCenter") },
+      { id: "top-right", label: t("settings.display.positionTopRight") },
       {
         id: "bottom-center",
         label: t("settings.display.positionBottomCenter"),
       },
       { id: "bottom-right", label: t("settings.display.positionBottomRight") },
-      { id: "top-center", label: t("settings.display.positionTopCenter") },
-      { id: "top-right", label: t("settings.display.positionTopRight") },
     ];
     if (pillPosition === "custom")
       opts.push({ id: "custom", label: t("settings.display.positionCustom") });
@@ -613,15 +677,9 @@ export default function SettingsPage(): React.JSX.Element {
   }, [pillPosition, t]);
 
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col"
-      style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-    >
-      <div className="h-7 shrink-0" />
-      <div
-        className="responsive-page-scroll grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] gap-x-10 gap-y-6 !pb-0 min-[900px]:grid-cols-[180px_minmax(0,1fr)]"
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-      >
+    <div className="flex min-h-0 flex-1 flex-col">
+      <DragSpacer />
+      <div className="responsive-page-scroll grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] gap-x-10 gap-y-6 !pb-0 min-[900px]:grid-cols-[180px_minmax(0,1fr)]">
         <div className="min-[900px]:col-span-2">
           <div className="mb-7">
             <h1 className="serif text-foreground m-0 text-[48px] font-normal leading-[0.95] tracking-[-0.025em]">
@@ -689,6 +747,25 @@ export default function SettingsPage(): React.JSX.Element {
                 desc={t("settings.interfaceLanguage.desc")}
               >
                 <LanguageSelector />
+              </Row>
+              <Row
+                label="Audio backup retention"
+                desc="Keep recorded WAV files for reprocessing, then remove them automatically."
+              >
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min="1"
+                    max="365"
+                    value={audioBackupRetentionDays}
+                    onChange={(event) =>
+                      saveAudioBackupRetention(event.target.value)
+                    }
+                    className="w-16 text-center"
+                    aria-label="Audio backup retention days"
+                  />
+                  <span className="text-muted-foreground text-xs">days</span>
+                </div>
               </Row>
               <Row
                 label={t("settings.application.autoUpdate")}
@@ -884,30 +961,6 @@ export default function SettingsPage(): React.JSX.Element {
               </Row>
 
               <Row
-                label={t("settings.recording.transcriptionPrompt")}
-                desc={t("settings.recording.transcriptionPromptDesc")}
-              >
-                <Input
-                  id="settings-transcription-prompt"
-                  type="text"
-                  value={transcriptionPrompt}
-                  onChange={(e) => setTranscriptionPrompt(e.target.value)}
-                  onBlur={() => {
-                    getClient()
-                      .api.settings[":key"].$put({
-                        param: { key: SETTINGS_KEYS.transcriptionPrompt },
-                        json: { value: transcriptionPrompt },
-                      })
-                      .catch(() => {});
-                  }}
-                  placeholder={t(
-                    "settings.recording.transcriptionPromptPlaceholder",
-                  )}
-                  className="max-w-md"
-                />
-              </Row>
-
-              <Row
                 last={!supportsBackgroundAudio}
                 label={t("settings.recording.sound")}
                 desc={t("settings.recording.soundDesc")}
@@ -1048,6 +1101,47 @@ export default function SettingsPage(): React.JSX.Element {
                 />
               </Row>
               <Row
+                label={t("settings.data.autoDelete")}
+                desc={t("settings.data.autoDeleteDesc")}
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <Select
+                    value={historyRetention}
+                    onValueChange={handleHistoryRetentionChange}
+                  >
+                    <SelectTrigger
+                      id="settings-history-retention"
+                      className="w-36"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {retentionOptions.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {historyRetention === "custom" && (
+                    <>
+                      <Input
+                        inputMode="numeric"
+                        value={customRetentionDays}
+                        onChange={(e) =>
+                          handleCustomRetentionDaysChange(e.target.value)
+                        }
+                        className="w-16 text-center"
+                        aria-label={t("settings.data.autoDeleteDays")}
+                      />
+                      <span className="text-muted-foreground text-xs">
+                        {t("settings.data.autoDeleteDays")}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </Row>
+              <Row
                 label={t("settings.data.history")}
                 desc={t("settings.data.historyDesc")}
               >
@@ -1076,6 +1170,28 @@ export default function SettingsPage(): React.JSX.Element {
           )}
 
           {activeSection === "network" && <NetworkPanel />}
+
+          {activeSection === "experimental" && (
+            <SettingsPanel>
+              <div className="border-border bg-secondary/40 text-muted-foreground mb-4 flex items-start gap-2.5 rounded-[10px] border px-3.5 py-3 text-[12px] leading-[1.55]">
+                <FlaskConical className="mt-px h-3.5 w-3.5 shrink-0 opacity-70" />
+                <span>
+                  These features are experimental and may change or be removed
+                  in future releases. Enable them to try new capabilities early.
+                </span>
+              </div>
+              <Row
+                label="Streaming audio"
+                desc="Stream audio in real-time for lower-latency dictation. Supported by Local Starling."
+                last
+              >
+                <Switch
+                  checked={streamingAudio}
+                  onCheckedChange={handleStreamingAudioToggle}
+                />
+              </Row>
+            </SettingsPanel>
+          )}
         </div>
       </div>
     </div>
@@ -1161,21 +1277,11 @@ function Row({
 // ---------------------------------------------------------------------------
 
 /** Load a single string setting from the server ("" when unset/unreachable). */
-async function loadStringSetting(key: string): Promise<string> {
-  try {
-    const res = await getClient().api.settings[":key"].$get({ param: { key } });
-    if (!res.ok) return "";
-    const data = (await res.json()) as { value?: string } | null;
-    return data?.value ?? "";
-  } catch {
-    return "";
-  }
-}
-
 function NetworkPanel(): React.JSX.Element {
   const { t } = useTranslation();
   // Single source of truth: the same zod schema the server enforces per-key,
   // so inline validation here matches exactly what the API will accept.
+  const queryClient = useQueryClient();
   const {
     control,
     reset,
@@ -1198,23 +1304,22 @@ function NetworkPanel(): React.JSX.Element {
     caCertPath: "",
   });
 
-  // Hydrate from the server once, then let react-hook-form own the state.
+  // Hydrate from the shared settings cache (deduped with every other
+  // ["settings-all"] consumer) instead of two dedicated single-key GETs.
+  const { data: settings } = useQuery(settingsQueryOptions());
+
+  // Seed the form once, when the settings first resolve. react-hook-form then
+  // owns the state; later cache changes don't re-seed (mutations patch the
+  // cache in place below, keeping it consistent without clobbering edits).
+  const seededRef = useRef(false);
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const [proxyUrl, caCertPath] = await Promise.all([
-        loadStringSetting(SETTINGS_KEYS.networkProxyUrl),
-        loadStringSetting(SETTINGS_KEYS.networkCaCertPath),
-      ]);
-      if (!cancelled) {
-        reset({ proxyUrl, caCertPath });
-        lastCommitted.current = { proxyUrl, caCertPath };
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [reset]);
+    if (!settings || seededRef.current) return;
+    seededRef.current = true;
+    const proxyUrl = settings[SETTINGS_KEYS.networkProxyUrl] ?? "";
+    const caCertPath = settings[SETTINGS_KEYS.networkCaCertPath] ?? "";
+    reset({ proxyUrl, caCertPath });
+    lastCommitted.current = { proxyUrl, caCertPath };
+  }, [settings, reset]);
 
   useEffect(
     () => () => {
@@ -1245,13 +1350,18 @@ function NetworkPanel(): React.JSX.Element {
         });
         if (res.ok) {
           lastCommitted.current[field] = value;
+          // Keep the shared settings cache truthful without a refetch.
+          queryClient.setQueryData<Record<string, string>>(
+            SETTINGS_QUERY_KEY,
+            (prev) => ({ ...(prev ?? {}), [key]: value }),
+          );
           flashSaved(field);
         }
       } catch {
         // Network/API errors surface via the field's onChange retry; swallow.
       }
     },
-    [trigger, getValues, flashSaved],
+    [trigger, getValues, flashSaved, queryClient],
   );
 
   return (
