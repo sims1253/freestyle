@@ -29,6 +29,8 @@ const MODEL_LOAD_TIMEOUT_MS = 30 * 60_000;
 const TRANSCRIBE_TIMEOUT_MS = 300_000;
 const LOAD_PING_INTERVAL_MS = 30_000;
 const STDERR_RING_SIZE = 20;
+const WSL_PORT_RELEASE_TIMEOUT_MS = 15_000;
+const PORT_RELEASE_POLL_INTERVAL_MS = 250;
 let processHandle: ChildProcess | null = null;
 let currentModelId: string | null = null;
 let ready = false;
@@ -145,6 +147,61 @@ async function fetchHealth(url: string): Promise<StarlingHealth | null> {
   }
 }
 
+async function isStarlingServerResponding(): Promise<boolean> {
+  try {
+    await fetch(`${getStarlingBaseUrl()}/health`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForStarlingPortRelease(): Promise<void> {
+  const deadline = Date.now() + WSL_PORT_RELEASE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (!(await isStarlingServerResponding())) return;
+    await new Promise((resolve) =>
+      setTimeout(resolve, PORT_RELEASE_POLL_INTERVAL_MS),
+    );
+  }
+  throw new Error(
+    "Starling server did not release its port within 15 seconds.",
+  );
+}
+
+async function stopWslStarlingProcesses(
+  wslDistro: string | undefined,
+): Promise<void> {
+  try {
+    const cleanup = spawn(
+      "wsl.exe",
+      [
+        ...(wslDistro ? ["-d", wslDistro] : []),
+        "-e",
+        "pkill",
+        "-f",
+        "starling.server",
+      ],
+      { stdio: "ignore" },
+    );
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 5_000);
+      cleanup.once("close", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      cleanup.once("error", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+  } catch {
+    // Best effort: killing wsl.exe does not always end its Linux child.
+  }
+}
+
 /**
  * `--no-eager-load` binds the HTTP server before model weights are ready, but
  * Starling only starts loading on a transcription request. A short silent WAV
@@ -207,7 +264,8 @@ async function ensureLocked(modelId: string): Promise<void> {
   if (!model) throw new Error(`Unknown Starling model: ${modelId}`);
 
   // An already-bound server may have been started outside Freestyle (notably
-  // inside WSL). Never stop a process we did not spawn.
+  // inside WSL). WSL mode declares that Freestyle manages this lifecycle, so
+  // it may take over a mismatched external server before starting the request.
   const health = await fetchHealth(getStarlingBaseUrl());
   if (health?.status === "ok") {
     if (health.model === model.slug) {
@@ -227,9 +285,17 @@ async function ensureLocked(modelId: string): Promise<void> {
       return;
     }
     if (!processHandle) {
-      throw new Error(
-        `Starling server is already running model "${health.model ?? "unknown"}", but Freestyle requested "${model.slug}". Stop or reconfigure the external server before switching models.`,
+      if (!getStarlingUseWsl()) {
+        throw new Error(
+          `Starling server is already running model "${health.model ?? "unknown"}", but Freestyle requested "${model.slug}". Stop or reconfigure the external server before switching models, or enable Run via WSL in Starling settings to let Freestyle manage and restart it automatically.`,
+        );
+      }
+      log.info(
+        `Taking over external Starling server running model "${health.model ?? "unknown"}" to switch to "${model.slug}".`,
       );
+      await stopWslStarlingProcesses(getStarlingWslDistro());
+      await waitForStarlingPortRelease();
+      external = false;
     }
   }
   // An external process may have stopped since its last successful health
@@ -424,22 +490,8 @@ async function stopUnlocked(): Promise<void> {
     }
   });
   if (usesWsl) {
-    try {
-      const cleanup = spawn(
-        "wsl.exe",
-        [
-          ...(wslDistro ? ["-d", wslDistro] : []),
-          "-e",
-          "pkill",
-          "-f",
-          "starling.server",
-        ],
-        { stdio: "ignore" },
-      );
-      cleanup.unref();
-    } catch {
-      // Best effort: killing wsl.exe does not always end its Linux child.
-    }
+    await stopWslStarlingProcesses(wslDistro);
+    await waitForStarlingPortRelease();
   }
 }
 
