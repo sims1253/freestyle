@@ -41,6 +41,10 @@ export function getStarlingKeepAliveMinutes(): number {
   const n = Number(readSetting("starling_keep_alive_minutes"));
   return Number.isFinite(n) ? Math.max(0, Math.min(60, Math.round(n))) : 10;
 }
+/** Dedicated GPUs benefit from retaining the already-warmed model in VRAM. */
+export function getStarlingKeepLoaded(): boolean {
+  return readSetting("starling_keep_loaded") !== "false";
+}
 export function getStarlingProfile(): string {
   return readSetting("starling_profile")?.trim() || "realtime";
 }

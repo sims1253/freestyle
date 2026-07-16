@@ -1154,6 +1154,16 @@ const FeedItem = memo(function FeedItem({
             })}
           </span>
           {wpm !== null && <span>· {t("history.nerdWpm", { n: wpm })}</span>}
+          {entry.audio_duration_ms > 0 && entry.duration_ms > 0 && (
+            <span>
+              ·{" "}
+              {t("history.nerdRealtime", {
+                factor: (entry.audio_duration_ms / entry.duration_ms).toFixed(
+                  1,
+                ),
+              })}
+            </span>
+          )}
           {hasTokens && (
             <span>
               ·{" "}

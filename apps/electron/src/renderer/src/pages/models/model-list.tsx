@@ -62,6 +62,12 @@ interface Row {
   curated?: boolean;
   recommended?: boolean;
   hasKey?: boolean;
+  starling?: {
+    downloaded: boolean;
+    downloading: boolean;
+    progress: number;
+    error: string | null;
+  };
   status?: WhisperModelDownloadState["status"];
   state?: WhisperModelDownloadState;
   /** A delete request for this local model is in flight. */
@@ -142,9 +148,20 @@ function buildVoiceRows(m: UseModels, h: VoiceHandlers): Row[] {
       meta: `${displayName(providerId, it.provider)}${note}${cost}`,
       selected: it.selected,
       hasKey: it.hasKey,
+      starling:
+        providerId === "local-starling"
+          ? m.starlingStatus?.modelDownloads[
+              it.modelId.replace(/^local-starling\//, "")
+            ]
+          : undefined,
       onSelect: it.available
         ? () => h.onPickCloud(it.available as AvailableModel)
         : undefined,
+      onDownload:
+        providerId === "local-starling"
+          ? () =>
+              m.downloadStarling(it.modelId.replace(/^local-starling\//, ""))
+          : undefined,
     };
   });
 }
@@ -500,6 +517,7 @@ function ModelRow({
   const status = row.status ?? "not_downloaded";
   const downloading =
     local && (status === "downloading" || status === "verifying");
+  const starlingDownload = row.starling;
 
   return (
     <div
@@ -535,13 +553,31 @@ function ModelRow({
           </div>
         )}
         {downloading && <DownloadProgress state={row.state} />}
+        {starlingDownload?.downloading && (
+          <StarlingDownloadProgress progress={starlingDownload.progress} />
+        )}
+        {starlingDownload?.error && (
+          <div className="text-destructive mt-1 text-[11.5px] leading-snug">
+            {starlingDownload.error}
+          </div>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5 justify-self-end">
         {row.selected ? (
-          <span className="text-primary text-[11px] font-semibold">
-            Selected
-          </span>
+          <>
+            <span className="text-primary text-[11px] font-semibold">
+              Selected
+            </span>
+            {starlingDownload &&
+              !starlingDownload.downloaded &&
+              !starlingDownload.downloading && (
+                <Button variant="outline" size="sm" onClick={row.onDownload}>
+                  <Download data-icon="inline-start" />
+                  Download
+                </Button>
+              )}
+          </>
         ) : local ? (
           <>
             {status === "ready" && (
@@ -592,6 +628,31 @@ function ModelRow({
               </>
             )}
           </>
+        ) : starlingDownload ? (
+          starlingDownload.downloading ? (
+            <span className="text-muted-foreground text-[11px] font-semibold">
+              Downloading
+            </span>
+          ) : starlingDownload.downloaded ? (
+            <>
+              <span className="text-primary text-[11px] font-semibold">
+                Downloaded
+              </span>
+              <Button variant="ink" size="sm" onClick={row.onSelect}>
+                Use
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" size="sm" onClick={row.onDownload}>
+                <Download data-icon="inline-start" />
+                Download
+              </Button>
+              <Button variant="ink" size="sm" onClick={row.onSelect}>
+                Use
+              </Button>
+            </>
+          )
         ) : isFreestyleCloud ? (
           cloud.user ? (
             <Button variant="ink" size="sm" onClick={row.onSelect}>
@@ -614,6 +675,19 @@ function ModelRow({
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+function StarlingDownloadProgress({
+  progress,
+}: {
+  progress: number;
+}): React.JSX.Element {
+  return (
+    <div className="mt-2 space-y-1">
+      <Progress value={progress} className="h-[5px]" />
+      <div className="text-muted-foreground mono text-[10px]">{progress}%</div>
     </div>
   );
 }

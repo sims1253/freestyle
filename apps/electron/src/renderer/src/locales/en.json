@@ -253,6 +253,7 @@
     "tokensInStat": "tokens in",
     "tokensOutStat": "tokens out",
     "nerdWpm": "{{n}} wpm",
+    "nerdRealtime": "× {{factor}} RT",
     "nerdTok": "{{in}}→{{out}} tok",
     "nerdCompute": "{{label}} compute",
     "done": "Done",

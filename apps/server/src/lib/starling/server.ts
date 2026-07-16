@@ -14,6 +14,7 @@ import {
   getStarlingBaseUrl,
   getStarlingHost,
   getStarlingKeepAliveMinutes,
+  getStarlingKeepLoaded,
   getStarlingPartialIntervalSeconds,
   getStarlingPort,
   getStarlingProfile,
@@ -328,6 +329,9 @@ async function ensureLocked(modelId: string): Promise<void> {
     // streaming clients responsive while transformers downloads a first-use
     // model, rather than making a healthy long load look like a dead process.
     "--no-eager-load",
+    // After lazy loading, capture the runtime warmup work before the user's
+    // first dictation rather than making that request pay the cold-start cost.
+    "--warmup",
   ];
   const useWsl = getStarlingUseWsl();
   const sourcePath = getStarlingSourcePath();
@@ -444,6 +448,7 @@ function clearUnloadTimer(): void {
 }
 function scheduleUnload(): void {
   clearUnloadTimer();
+  if (getStarlingKeepLoaded()) return;
   if (external) return;
   if (!processHandle) return;
   const delay = getStarlingKeepAliveMinutes() * 60_000;

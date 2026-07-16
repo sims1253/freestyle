@@ -1,6 +1,7 @@
-import { getClient } from "@renderer/lib/api";
+import { getApiBase, getClient } from "@renderer/lib/api";
 import type {
   AvailableModel,
+  StarlingStatus,
   VoiceItem,
   WhisperStatus,
 } from "@renderer/lib/models";
@@ -25,6 +26,7 @@ const MODELS_KEYS = {
   settings: SETTINGS_QUERY_KEY,
   whisper: ["whisper-status"] as const,
   mlx: ["mlx-status"] as const,
+  starling: ["starling-status"] as const,
 };
 
 // Stable empty fallbacks so derived useMemo deps don't change identity while a
@@ -53,6 +55,7 @@ export interface UseModels {
   apiKeys: ApiKeyEntry[];
   whisperStatus: WhisperStatus | null;
   mlxStatus: null;
+  starlingStatus: StarlingStatus | null;
   llmCleanup: boolean;
   /** True once the editable form state has been seeded from persisted settings. */
   settingsSeeded: boolean;
@@ -88,6 +91,7 @@ export interface UseModels {
   ) => Promise<void>;
   retryLocalMlx: (defId: string) => Promise<void>;
   downloadLocal: (defId: string, engine?: "whisper" | "mlx") => void;
+  downloadStarling: (modelId: string) => void;
   cancelLocal: (defId: string, engine?: "whisper" | "mlx") => void;
   deleteLocal: (defId: string, engine?: "whisper" | "mlx") => Promise<void>;
   selectLocalLlmModel: (modelName: string) => Promise<void>;
@@ -138,12 +142,27 @@ export function useModels(): UseModels {
     enabled: false,
     queryFn: async (): Promise<WhisperStatus | null> => null,
   });
+  const starlingQuery = useQuery({
+    queryKey: MODELS_KEYS.starling,
+    queryFn: async (): Promise<StarlingStatus> => {
+      const response = await fetch(`${getApiBase()}/api/starling/status`);
+      if (!response.ok) throw new Error("Failed to load Starling status");
+      return response.json() as Promise<StarlingStatus>;
+    },
+    refetchInterval: (query) =>
+      Object.values(query.state.data?.modelDownloads ?? {}).some(
+        (model) => model.downloading,
+      )
+        ? 1_000
+        : false,
+  });
 
   const available = availableQuery.data ?? EMPTY_AVAILABLE;
   const configured = configuredQuery.data ?? EMPTY_CONFIGURED;
   const apiKeys = keysQuery.data ?? EMPTY_KEYS;
   const whisperStatus = whisperQuery.data ?? null;
   const mlxStatus = null;
+  const starlingStatus = starlingQuery.data ?? null;
   const loading =
     availableQuery.isLoading ||
     configuredQuery.isLoading ||
@@ -213,6 +232,7 @@ export function useModels(): UseModels {
       queryClient.invalidateQueries({ queryKey: ["models"] }),
       queryClient.invalidateQueries({ queryKey: MODELS_KEYS.keys }),
       queryClient.invalidateQueries({ queryKey: MODELS_KEYS.settings }),
+      queryClient.invalidateQueries({ queryKey: MODELS_KEYS.starling }),
     ]);
   }, [queryClient]);
   const loadData = reload;
@@ -323,6 +343,17 @@ export function useModels(): UseModels {
       void engine;
     },
     [],
+  );
+
+  const downloadStarling = useCallback(
+    (defId: string) => {
+      void fetch(`${getApiBase()}/api/starling/models/${defId}/download`, {
+        method: "POST",
+      }).then(() =>
+        queryClient.invalidateQueries({ queryKey: MODELS_KEYS.starling }),
+      );
+    },
+    [queryClient],
   );
 
   const cancelLocal = useCallback(
@@ -481,6 +512,7 @@ export function useModels(): UseModels {
     apiKeys,
     whisperStatus,
     mlxStatus,
+    starlingStatus,
     llmCleanup,
     settingsSeeded,
     mlxKeepAliveMinutes,
@@ -508,6 +540,7 @@ export function useModels(): UseModels {
     selectLocalVoice,
     retryLocalMlx,
     downloadLocal,
+    downloadStarling,
     cancelLocal,
     deleteLocal,
     selectLocalLlmModel,

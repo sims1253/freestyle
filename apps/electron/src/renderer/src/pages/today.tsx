@@ -387,6 +387,10 @@ function TimelineNode({ entry }: { entry: HistoryEntry }): React.JSX.Element {
     entry.audio_duration_ms > 0
       ? Math.round(words / (entry.audio_duration_ms / 60000))
       : 0;
+  const realtimeFactor =
+    entry.audio_duration_ms > 0 && entry.duration_ms > 0
+      ? entry.audio_duration_ms / entry.duration_ms
+      : null;
 
   return (
     <div className="relative mb-[18px]">
@@ -414,6 +418,9 @@ function TimelineNode({ entry }: { entry: HistoryEntry }): React.JSX.Element {
           <span className="mono text-muted-foreground text-[10.5px] tracking-[0.04em]">
             {wpm > 0 ? `${wpm} wpm · ` : ""}
             {audioSec}s · {words} wds
+            {realtimeFactor !== null
+              ? ` · × ${realtimeFactor.toFixed(1)} RT`
+              : ""}
           </span>
         </div>
         <p className="text-foreground m-0 line-clamp-3 text-[15px] leading-[1.55]">

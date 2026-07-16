@@ -155,7 +155,10 @@ const settings = new Hono()
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
     ).run(key, String(body.value));
 
-    if (key === "starling_keep_alive_minutes") {
+    if (
+      key === "starling_keep_alive_minutes" ||
+      key === "starling_keep_loaded"
+    ) {
       applyStarlingRetentionPolicy();
     }
     if (key === HISTORY_RETENTION_SETTING_KEY) {
