@@ -30,6 +30,12 @@ export const SETTINGS_KEYS = {
   outputMode: "output_mode",
   pillCancelButton: "pill_cancel_button",
   soundEnabled: "sound_enabled",
+  starlingHost: "starling_host",
+  starlingKeepAliveMinutes: "starling_keep_alive_minutes",
+  starlingPort: "starling_port",
+  starlingProfile: "starling_profile",
+  starlingPythonPath: "starling_python_path",
+  starlingSourcePath: "starling_source_path",
   theme: "theme",
   translateMode: "translate_mode",
 } as const;

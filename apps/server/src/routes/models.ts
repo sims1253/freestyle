@@ -18,6 +18,12 @@ import { reconcileUnsupportedMlxVoiceDefault } from "../lib/mlx-asr/reconcile.js
 import { canRunMlxAsr } from "../lib/mlx-asr/server.js";
 import { capture } from "../lib/posthog.js";
 import {
+  STARLING_MODELS,
+  STARLING_PROVIDER_ID,
+  STARLING_PROVIDER_NAME,
+} from "../lib/starling/constants.js";
+import { canRunStarling } from "../lib/starling/server.js";
+import {
   LEGACY_WHISPER_MODELS,
   WHISPER_MODELS,
   WHISPER_PROVIDER_ID,
@@ -121,6 +127,20 @@ const LOCAL_MLX_VOICE_MODELS: AvailableModel[] = [
   cost_input: 0,
   cost_output: 0,
 }));
+
+const LOCAL_STARLING_VOICE_MODELS: AvailableModel[] = STARLING_MODELS.map(
+  (m) => ({
+    provider_id: STARLING_PROVIDER_ID,
+    provider_name: STARLING_PROVIDER_NAME,
+    model_id: `${STARLING_PROVIDER_ID}/${m.id}`,
+    model_name: m.displayName,
+    family: m.family,
+    type: "voice" as const,
+    cost_input: 0,
+    cost_output: 0,
+    curated: true,
+  }),
+);
 
 // Curated cloud voice catalog: one flagship per provider. The models.dev
 // registry is deliberately NOT merged for voice — untested model noise.
@@ -456,6 +476,10 @@ const models = new Hono()
           }
         }
       }
+
+      // Starling manages its model weights in the configured Python environment;
+      // unlike whisper/MLX there is no separate download status to wait for.
+      if (canRunStarling()) available.push(...LOCAL_STARLING_VOICE_MODELS);
 
       try {
         const localModels = await fetchLocalLlmModels();

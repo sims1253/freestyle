@@ -23,6 +23,7 @@ import postProcessRoute from "./post-process-route.js";
 import pricing from "./pricing.js";
 import remixRoute from "./remix/index.js";
 import settings from "./settings.js";
+import starling from "./starling.js";
 import streamRoute from "./stream.js";
 import transcribe, { transcribePreWarmRoute } from "./transcribe.js";
 import usage from "./usage.js";
@@ -83,7 +84,8 @@ const apiRouter = new Hono()
   .route("/org", org)
   .route("/plugins", pluginsRoute)
   .route("/whisper", whisper)
-  .route("/mlx-asr", mlxAsr);
+  .route("/mlx-asr", mlxAsr)
+  .route("/starling", starling);
 
 const router = new Hono()
   .route("/api", apiRouter)

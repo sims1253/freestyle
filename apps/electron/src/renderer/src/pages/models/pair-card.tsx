@@ -22,6 +22,7 @@ export function PairCard({
   onChangeVoice,
   onChangeLlm,
   onConfigureWarming,
+  onConfigureStarling,
 }: {
   voice: ConfiguredModel | undefined;
   llm: ConfiguredModel | undefined;
@@ -33,6 +34,7 @@ export function PairCard({
   onChangeLlm: () => void;
   /** When set, shows a "Configure model warming" link below the voice button. */
   onConfigureWarming?: () => void;
+  onConfigureStarling?: () => void;
 }): React.JSX.Element {
   const { t } = useTranslation();
   const cleanupOn = cleanupLocked || llmCleanup;
@@ -52,6 +54,14 @@ export function PairCard({
             ? {
                 label: t("models.pair.configureWarming"),
                 onClick: onConfigureWarming,
+              }
+            : undefined
+        }
+        starlingAction={
+          onConfigureStarling
+            ? {
+                label: "Configure Starling runtime",
+                onClick: onConfigureStarling,
               }
             : undefined
         }
@@ -101,6 +111,7 @@ function PairSide({
   dimmed,
   providerIsIncluded,
   warmingAction,
+  starlingAction,
 }: {
   kicker: string;
   modelName: string | undefined;
@@ -116,6 +127,7 @@ function PairSide({
   dimmed?: boolean;
   providerIsIncluded?: boolean;
   warmingAction?: { label: string; onClick: () => void };
+  starlingAction?: { label: string; onClick: () => void };
 }): React.JSX.Element {
   const { t } = useTranslation();
   return (
@@ -196,6 +208,16 @@ function PairSide({
             className="text-muted-foreground h-auto px-0 text-[13px] font-normal"
           >
             {warmingAction.label}
+          </Button>
+        )}
+        {starlingAction && (
+          <Button
+            variant="link"
+            size="sm"
+            onClick={starlingAction.onClick}
+            className="text-muted-foreground h-auto px-0 text-[13px] font-normal"
+          >
+            {starlingAction.label}
           </Button>
         )}
       </div>

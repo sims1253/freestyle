@@ -34,6 +34,7 @@ import {
   pushSettingToCloud,
   SYNCED_SETTING_KEYS,
 } from "../lib/preferences-sync.js";
+import { applyStarlingRetentionPolicy } from "../lib/starling/server.js";
 import { applyWhisperRetentionPolicy } from "../lib/whisper/server.js";
 
 /**
@@ -197,6 +198,9 @@ const settings = new Hono()
     }
     if (key === "whisper_keep_alive_minutes") {
       applyWhisperRetentionPolicy();
+    }
+    if (key === "starling_keep_alive_minutes") {
+      applyStarlingRetentionPolicy();
     }
     if (key === HISTORY_RETENTION_SETTING_KEY) {
       purgeExpiredHistory();

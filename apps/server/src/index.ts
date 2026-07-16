@@ -285,6 +285,7 @@ export {
   uninstallPackage,
 } from "./lib/plugins/installer.js";
 export { captureException, shutdownPosthog } from "./lib/posthog.js";
+export { stopStarlingServer } from "./lib/starling/server.js";
 export { stopServer as stopWhisperServer } from "./lib/whisper/server.js";
 export {
   activateManagedMlxRuntimeForAppVersion,

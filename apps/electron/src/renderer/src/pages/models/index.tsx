@@ -22,6 +22,7 @@ import { MlxWarmingDialog } from "./mlx-memory-section";
 import { ConfirmDialog, type ModalState, ModelModal } from "./model-modal";
 import { Eyebrow, PageHeader, PageShell } from "./page-chrome";
 import { PairCard } from "./pair-card";
+import { StarlingSettingsDialog } from "./starling-settings-section";
 import {
   FREESTYLE_CLOUD_CLEANUP,
   FREESTYLE_CLOUD_TIER,
@@ -62,6 +63,7 @@ export default function ModelsPage(): React.JSX.Element {
     string | null
   >(null);
   const [warmingOpen, setWarmingOpen] = useState(false);
+  const [starlingOpen, setStarlingOpen] = useState(false);
 
   const freestyleVoiceActive =
     m.defaultVoice?.provider === FREESTYLE_CLOUD_PROVIDER;
@@ -163,6 +165,7 @@ export default function ModelsPage(): React.JSX.Element {
 
     const needsKey =
       model.provider_id !== "local-llm" &&
+      model.provider_id !== "local-starling" &&
       model.provider_id !== FREESTYLE_CLOUD_PROVIDER &&
       !m.keyProviders.has(model.provider_id);
     if (needsKey) {
@@ -236,6 +239,7 @@ export default function ModelsPage(): React.JSX.Element {
 
     const needsKey =
       model.provider_id !== "local-llm" &&
+      model.provider_id !== "local-starling" &&
       model.provider_id !== FREESTYLE_CLOUD_PROVIDER &&
       !m.keyProviders.has(model.provider_id);
     if (needsKey) {
@@ -310,6 +314,7 @@ export default function ModelsPage(): React.JSX.Element {
   };
 
   const showMlxWarming = m.defaultVoice?.provider === "local-mlx";
+  const showStarlingSettings = m.defaultVoice?.provider === "local-starling";
 
   // -------------------------------------------------------------------------
   // Render
@@ -344,6 +349,9 @@ export default function ModelsPage(): React.JSX.Element {
           onConfigureWarming={
             showMlxWarming ? () => setWarmingOpen(true) : undefined
           }
+          onConfigureStarling={
+            showStarlingSettings ? () => setStarlingOpen(true) : undefined
+          }
         />
 
         <KeysSection
@@ -369,6 +377,9 @@ export default function ModelsPage(): React.JSX.Element {
           onChange={m.saveMlxKeepAliveMinutes}
           onClose={() => setWarmingOpen(false)}
         />
+      )}
+      {starlingOpen && (
+        <StarlingSettingsDialog onClose={() => setStarlingOpen(false)} />
       )}
 
       {modal && (
