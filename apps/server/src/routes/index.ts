@@ -18,6 +18,7 @@ import outputRoute from "./output.js";
 import pluginsRoute from "./plugins.js";
 import postProcessRoute from "./post-process-route.js";
 import settings from "./settings.js";
+import starling from "./starling.js";
 import streamRoute from "./stream.js";
 import transcribe, { transcribePreWarmRoute } from "./transcribe.js";
 import usage from "./usage.js";
@@ -73,7 +74,8 @@ const apiRouter = new Hono()
   .route("/usage", usage)
   .route("/plugins", pluginsRoute)
   .route("/whisper", whisper)
-  .route("/mlx-asr", mlxAsr);
+  .route("/mlx-asr", mlxAsr)
+  .route("/starling", starling);
 
 const router = new Hono()
   .route("/api", apiRouter)

@@ -2,6 +2,7 @@ import { getDb } from "./db.js";
 import { FREESTYLE_CLOUD_PROVIDER_ID } from "./freestyle-cloud.js";
 import { MLX_ASR_PROVIDER_ID } from "./mlx-asr/constants.js";
 import { getSessionToken } from "./sessions.js";
+import { STARLING_PROVIDER_ID } from "./starling/constants.js";
 import { getProvider, supportsSessionTransport } from "./streaming/registry.js";
 import type {
   StreamCallbacks,
@@ -17,7 +18,11 @@ export {
 } from "./streaming/registry.js";
 export type { StreamCallbacks, StreamSession } from "./streaming/types.js";
 
-const LOCAL_STT_PROVIDERS = new Set([WHISPER_PROVIDER_ID, MLX_ASR_PROVIDER_ID]);
+const LOCAL_STT_PROVIDERS = new Set([
+  WHISPER_PROVIDER_ID,
+  MLX_ASR_PROVIDER_ID,
+  STARLING_PROVIDER_ID,
+]);
 
 export type VoiceProviderCategory = "local" | "byok" | "freestyle_cloud";
 

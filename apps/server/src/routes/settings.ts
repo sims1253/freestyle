@@ -28,6 +28,7 @@ import {
   PROXY_URL_SETTING,
 } from "../lib/network.js";
 import { capture } from "../lib/posthog.js";
+import { applyStarlingRetentionPolicy } from "../lib/starling/server.js";
 import { applyWhisperRetentionPolicy } from "../lib/whisper/server.js";
 
 const settings = new Hono()
@@ -161,6 +162,9 @@ const settings = new Hono()
     }
     if (key === "whisper_keep_alive_minutes") {
       applyWhisperRetentionPolicy();
+    }
+    if (key === "starling_keep_alive_minutes") {
+      applyStarlingRetentionPolicy();
     }
     if (key === HISTORY_RETENTION_SETTING_KEY) {
       purgeExpiredHistory();

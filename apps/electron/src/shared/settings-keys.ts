@@ -21,6 +21,12 @@ export const SETTINGS_KEYS = {
   networkProxyUrl: "network_proxy_url",
   outputMode: "output_mode",
   soundEnabled: "sound_enabled",
+  starlingHost: "starling_host",
+  starlingKeepAliveMinutes: "starling_keep_alive_minutes",
+  starlingPort: "starling_port",
+  starlingProfile: "starling_profile",
+  starlingPythonPath: "starling_python_path",
+  starlingSourcePath: "starling_source_path",
   theme: "theme",
 } as const;
 

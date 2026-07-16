@@ -39,6 +39,11 @@ import {
 import { capture, captureException } from "../lib/posthog.js";
 import { getDefaultModels } from "../lib/providers.js";
 import { invalidateSession } from "../lib/sessions.js";
+import { STARLING_PROVIDER_ID } from "../lib/starling/constants.js";
+import {
+  canRunStarling,
+  startStarlingInBackground,
+} from "../lib/starling/server.js";
 import { CloudAuthError } from "../lib/streaming/providers/freestyle-cloud.js";
 import { getProvider } from "../lib/streaming/registry.js";
 import { stripProviderPrefix } from "../lib/streaming/types.js";
@@ -57,7 +62,11 @@ const log = createAppLogger("transcribe");
 function routeVoiceProviderCategory(
   providerId: string,
 ): "local" | "byok" | "freestyle_cloud" {
-  if (providerId === "local-whisper" || providerId === "local-mlx")
+  if (
+    providerId === "local-whisper" ||
+    providerId === "local-mlx" ||
+    providerId === STARLING_PROVIDER_ID
+  )
     return "local";
   if (providerId === FREESTYLE_CLOUD_PROVIDER_ID) return "freestyle_cloud";
   return "byok";
@@ -607,6 +616,12 @@ export const transcribePreWarmRoute = new Hono().post("/pre-warm", (c) => {
       }
       startMlxInBackground(modelId);
       return c.json({ ok: true, warming: "mlx" });
+    }
+
+    if (provider === STARLING_PROVIDER_ID) {
+      if (!canRunStarling()) return c.json({ ok: true, warming: null });
+      startStarlingInBackground(modelId);
+      return c.json({ ok: true, warming: "starling" });
     }
 
     return c.json({ ok: true, warming: null });
