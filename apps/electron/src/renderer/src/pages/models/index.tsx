@@ -18,15 +18,11 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
-import { MlxWarmingDialog } from "./mlx-memory-section";
 import { ConfirmDialog, type ModalState, ModelModal } from "./model-modal";
 import { Eyebrow, PageHeader, PageShell } from "./page-chrome";
 import { PairCard } from "./pair-card";
 import { StarlingSettingsDialog } from "./starling-settings-section";
-import {
-  FREESTYLE_CLOUD_CLEANUP,
-  FREESTYLE_CLOUD_TIER,
-} from "./transcription-picker";
+import { FREESTYLE_CLOUD_CLEANUP } from "./transcription-picker";
 import type { ApiKeyEntry, ConfiguredModel } from "./types";
 import { useModels } from "./use-models";
 import { displayName } from "./utils";
@@ -62,7 +58,6 @@ export default function ModelsPage(): React.JSX.Element {
   const [pendingProviderDelete, setPendingProviderDelete] = useState<
     string | null
   >(null);
-  const [warmingOpen, setWarmingOpen] = useState(false);
   const [starlingOpen, setStarlingOpen] = useState(false);
 
   const freestyleVoiceActive =
@@ -140,29 +135,10 @@ export default function ModelsPage(): React.JSX.Element {
     return !!(await cloudAuth.signIn());
   };
 
-  const configureFreestylePair = async (): Promise<void> => {
-    setCloudBusy(true);
-    try {
-      if (!(await ensureCloudAuth())) return;
-      await m.configureModel(FREESTYLE_CLOUD_TIER, "voice");
-      await m.configureModel(FREESTYLE_CLOUD_CLEANUP, "llm");
-      m.setCleanup(true);
-    } finally {
-      setCloudBusy(false);
-    }
-  };
-
   const configureVoice = (
     model: AvailableModel,
     { closeAfter = false }: { closeAfter?: boolean } = {},
   ): void => {
-    if (model.provider_id === FREESTYLE_CLOUD_PROVIDER) {
-      void configureFreestylePair().then(() => {
-        if (closeAfter) closeModal();
-      });
-      return;
-    }
-
     const needsKey =
       model.provider_id !== "local-llm" &&
       model.provider_id !== "local-starling" &&
@@ -300,20 +276,12 @@ export default function ModelsPage(): React.JSX.Element {
         return;
       }
       if (pendingModel && type) {
-        if (
-          type === "voice" &&
-          pendingModel.provider_id === FREESTYLE_CLOUD_PROVIDER
-        ) {
-          await configureFreestylePair();
-        } else {
-          await m.configureModel(pendingModel, type);
-        }
+        await m.configureModel(pendingModel, type);
       }
       closeModal();
     })();
   };
 
-  const showMlxWarming = m.defaultVoice?.provider === "local-mlx";
   const showStarlingSettings = m.defaultVoice?.provider === "local-starling";
 
   // -------------------------------------------------------------------------
@@ -346,9 +314,6 @@ export default function ModelsPage(): React.JSX.Element {
           onToggleCleanup={onToggleCleanup}
           onChangeVoice={openVoice}
           onChangeLlm={openLlm}
-          onConfigureWarming={
-            showMlxWarming ? () => setWarmingOpen(true) : undefined
-          }
           onConfigureStarling={
             showStarlingSettings ? () => setStarlingOpen(true) : undefined
           }
@@ -370,14 +335,6 @@ export default function ModelsPage(): React.JSX.Element {
         />
       </div>
 
-      {warmingOpen && (
-        <MlxWarmingDialog
-          keepAliveMinutes={m.mlxKeepAliveMinutes}
-          blockedReason={m.mlxStatus?.blockedReason ?? null}
-          onChange={m.saveMlxKeepAliveMinutes}
-          onClose={() => setWarmingOpen(false)}
-        />
-      )}
       {starlingOpen && (
         <StarlingSettingsDialog onClose={() => setStarlingOpen(false)} />
       )}

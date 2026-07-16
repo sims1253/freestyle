@@ -23,7 +23,6 @@ import {
   HISTORY_RETENTION_SETTING_KEY,
   purgeExpiredHistory,
 } from "../lib/history-store.js";
-import { applyMlxAsrRetentionPolicy } from "../lib/mlx-asr/server.js";
 import {
   CA_CERT_PATH_SETTING,
   configureNetwork,
@@ -35,7 +34,6 @@ import {
   SYNCED_SETTING_KEYS,
 } from "../lib/preferences-sync.js";
 import { applyStarlingRetentionPolicy } from "../lib/starling/server.js";
-import { applyWhisperRetentionPolicy } from "../lib/whisper/server.js";
 
 /**
  * Normalize an OpenAI-compatible base URL for the `/v1/models` probe.
@@ -191,13 +189,6 @@ const settings = new Hono()
     // sync never affects the local write or the response.
     if (SYNCED_SETTING_KEYS.has(key)) {
       pushSettingToCloud(key, String(body.value));
-    }
-
-    if (key === "mlx_asr_keep_alive_minutes") {
-      applyMlxAsrRetentionPolicy();
-    }
-    if (key === "whisper_keep_alive_minutes") {
-      applyWhisperRetentionPolicy();
     }
     if (key === "starling_keep_alive_minutes") {
       applyStarlingRetentionPolicy();

@@ -14,7 +14,6 @@ import dictionary from "./dictionary.js";
 import dismissedNotifications from "./dismissed-notifications.js";
 import eventsRoute from "./events.js";
 import history from "./history.js";
-import mlxAsr from "./mlx-asr.js";
 import models from "./models.js";
 import org from "./org.js";
 import outputRoute from "./output.js";
@@ -28,7 +27,6 @@ import streamRoute from "./stream.js";
 import transcribe, { transcribePreWarmRoute } from "./transcribe.js";
 import usage from "./usage.js";
 import vocabulary from "./vocabulary.js";
-import whisper from "./whisper.js";
 
 const clientLog = createAppLogger("renderer");
 
@@ -83,8 +81,6 @@ const apiRouter = new Hono()
   .route("/pricing", pricing)
   .route("/org", org)
   .route("/plugins", pluginsRoute)
-  .route("/whisper", whisper)
-  .route("/mlx-asr", mlxAsr)
   .route("/starling", starling);
 
 const router = new Hono()

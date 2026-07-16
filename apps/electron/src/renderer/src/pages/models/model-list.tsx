@@ -1,9 +1,3 @@
-import type { EndpointConnectFormValues } from "@freestyle-voice/validations";
-import {
-  localLlmConnectFormSchema,
-  openaiSttConnectFormSchema,
-} from "@freestyle-voice/validations";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
@@ -37,7 +31,6 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
-import { Controller, type Resolver, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import {
   PICKER_MODAL_BODY,
@@ -49,10 +42,9 @@ import {
   FREESTYLE_CLOUD_TIER,
   OpenModelSourceButton,
   recommendedVoiceKey,
-  TranscriptionPicker,
 } from "./transcription-picker";
 import type { ConfiguredModel } from "./types";
-import type { EndpointConnectState, UseModels } from "./use-models";
+import type { UseModels } from "./use-models";
 import { displayName } from "./utils";
 
 // ---------------------------------------------------------------------------
@@ -68,10 +60,14 @@ interface Row {
   selected: boolean;
   /** Shown by default; non-curated rows live behind "Show all models". */
   curated?: boolean;
-  /** LLM gateway display name (e.g. "OpenRouter"); rendered as a meta badge. */
-  gateway?: string;
   recommended?: boolean;
   hasKey?: boolean;
+  starling?: {
+    downloaded: boolean;
+    downloading: boolean;
+    progress: number;
+    error: string | null;
+  };
   status?: WhisperModelDownloadState["status"];
   state?: WhisperModelDownloadState;
   /** A delete request for this local model is in flight. */
@@ -152,9 +148,20 @@ function buildVoiceRows(m: UseModels, h: VoiceHandlers): Row[] {
       meta: `${displayName(providerId, it.provider)}${note}${cost}`,
       selected: it.selected,
       hasKey: it.hasKey,
+      starling:
+        providerId === "local-starling"
+          ? m.starlingStatus?.modelDownloads[
+              it.modelId.replace(/^local-starling\//, "")
+            ]
+          : undefined,
       onSelect: it.available
         ? () => h.onPickCloud(it.available as AvailableModel)
         : undefined,
+      onDownload:
+        providerId === "local-starling"
+          ? () =>
+              m.downloadStarling(it.modelId.replace(/^local-starling\//, ""))
+          : undefined,
     };
   });
 }
@@ -168,21 +175,13 @@ function buildLlmRows(
   for (const [providerId, { providerName, models }] of m.llmModelsByProvider) {
     if (providerId === FREESTYLE_CLOUD_CLEANUP.provider_id) continue;
     for (const model of models) {
-      // For gateway models the meta line reads "<vendor> via <gateway>"
-      // (e.g. "Microsoft via OpenRouter"). Vendor is the model_id prefix; some
-      // gateway IDs carry a "~" alias prefix ("~openai/...") — strip it.
-      const vendor = model.model_id.replace(/^~/, "").split("/")[0] ?? "";
-      const meta = model.gateway
-        ? vendor.charAt(0).toUpperCase() + vendor.slice(1)
-        : providerName;
       rows.push({
         key: model.model_id,
         name: model.model_name,
         source: "cloud",
         provider: providerId,
-        meta,
+        meta: providerName,
         curated: model.curated === true,
-        gateway: model.gateway,
         selected:
           m.defaultLlm?.model_id === model.model_id &&
           m.defaultLlm?.provider === model.provider_id,
@@ -227,7 +226,7 @@ export function ModelList({
   voiceView,
   llmView,
   m,
-  cloudBusy,
+  cloudBusy: _cloudBusy,
   onClose,
   onPickCloud,
   onPickLocalVoice,
@@ -264,7 +263,7 @@ export function ModelList({
       if (voiceView === "cloud") return "cloud";
       if (voiceView === "local") return "local";
       if (voiceView === "all") return "all";
-      return voiceView ?? "tiers";
+      return voiceView === "tiers" || !voiceView ? "all" : voiceView;
     }
     if (llmView === "cloud") return "cloud";
     if (llmView === "local") return "local";
@@ -272,19 +271,6 @@ export function ModelList({
     return llmView ?? "tiers";
   });
   const [showAllLlm, setShowAllLlm] = useState(false);
-
-  if (type === "voice" && view === "tiers") {
-    return (
-      <TranscriptionPicker
-        m={m}
-        busy={cloudBusy}
-        onClose={onClose}
-        onPickCloud={onPickCloud}
-        onBrowseLocal={() => setView("local")}
-        onBrowseCloud={() => setView("cloud")}
-      />
-    );
-  }
 
   if (type === "llm" && view === "tiers") {
     return (
@@ -333,11 +319,7 @@ export function ModelList({
       r.provider !== filter
     )
       return false;
-    if (
-      q &&
-      !`${r.name} ${r.meta} ${r.gateway ?? ""}`.toLowerCase().includes(q)
-    )
-      return false;
+    if (q && !`${r.name} ${r.meta}`.toLowerCase().includes(q)) return false;
     return true;
   });
   const visible = filteredRows.filter((r) => {
@@ -349,7 +331,6 @@ export function ModelList({
     : 0;
 
   const showLocalLlmForm = type === "llm" && localOnly;
-  const showOpenaiSttForm = type === "voice" && cloudOnly;
 
   const scopedTitle =
     type === "voice"
@@ -439,7 +420,6 @@ export function ModelList({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {showLocalLlmForm && <LocalLlmConnect m={m} />}
-        {showOpenaiSttForm && <OpenaiSttConnect m={m} />}
         {visible.length === 0 ? (
           <ListEmptyState
             type={type}
@@ -456,7 +436,7 @@ export function ModelList({
           <Button
             variant="ghost"
             onClick={() => setShowAllLlm(true)}
-            className="border-border text-muted-foreground hover:text-foreground h-auto w-full justify-start rounded-none px-5 py-3 text-left text-[12.5px] font-normal border-x-0 border-b-0"
+            className="border-border text-muted-foreground hover:text-foreground h-auto w-full justify-start rounded-none border-t px-5 py-3 text-left text-[12.5px] font-normal"
           >
             Show all models ({hiddenCount} more) →
           </Button>
@@ -537,6 +517,7 @@ function ModelRow({
   const status = row.status ?? "not_downloaded";
   const downloading =
     local && (status === "downloading" || status === "verifying");
+  const starlingDownload = row.starling;
 
   return (
     <div
@@ -564,16 +545,7 @@ function ModelRow({
           )}
         </div>
         <div className="text-muted-foreground mt-0.5 text-[12px]">
-          {row.gateway ? (
-            <>
-              {row.meta}
-              {row.meta && " "}
-              <span className="text-muted-foreground/70">via</span>{" "}
-              {row.gateway}
-            </>
-          ) : (
-            row.meta
-          )}
+          {row.meta}
         </div>
         {local && status === "error" && row.state?.error && (
           <div className="text-destructive mt-1 text-[11.5px] leading-snug">
@@ -581,13 +553,31 @@ function ModelRow({
           </div>
         )}
         {downloading && <DownloadProgress state={row.state} />}
+        {starlingDownload?.downloading && (
+          <StarlingDownloadProgress progress={starlingDownload.progress} />
+        )}
+        {starlingDownload?.error && (
+          <div className="text-destructive mt-1 text-[11.5px] leading-snug">
+            {starlingDownload.error}
+          </div>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5 justify-self-end">
         {row.selected ? (
-          <span className="text-primary text-[11px] font-semibold">
-            Selected
-          </span>
+          <>
+            <span className="text-primary text-[11px] font-semibold">
+              Selected
+            </span>
+            {starlingDownload &&
+              !starlingDownload.downloaded &&
+              !starlingDownload.downloading && (
+                <Button variant="outline" size="sm" onClick={row.onDownload}>
+                  <Download data-icon="inline-start" />
+                  Download
+                </Button>
+              )}
+          </>
         ) : local ? (
           <>
             {status === "ready" && (
@@ -638,6 +628,31 @@ function ModelRow({
               </>
             )}
           </>
+        ) : starlingDownload ? (
+          starlingDownload.downloading ? (
+            <span className="text-muted-foreground text-[11px] font-semibold">
+              Downloading
+            </span>
+          ) : starlingDownload.downloaded ? (
+            <>
+              <span className="text-primary text-[11px] font-semibold">
+                Downloaded
+              </span>
+              <Button variant="ink" size="sm" onClick={row.onSelect}>
+                Use
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" size="sm" onClick={row.onDownload}>
+                <Download data-icon="inline-start" />
+                Download
+              </Button>
+              <Button variant="ink" size="sm" onClick={row.onSelect}>
+                Use
+              </Button>
+            </>
+          )
         ) : isFreestyleCloud ? (
           cloud.user ? (
             <Button variant="ink" size="sm" onClick={row.onSelect}>
@@ -660,6 +675,19 @@ function ModelRow({
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+function StarlingDownloadProgress({
+  progress,
+}: {
+  progress: number;
+}): React.JSX.Element {
+  return (
+    <div className="mt-2 space-y-1">
+      <Progress value={progress} className="h-[5px]" />
+      <div className="text-muted-foreground mono text-[10px]">{progress}%</div>
     </div>
   );
 }
@@ -739,137 +767,72 @@ function ListEmptyState({
 }
 
 function LocalLlmConnect({ m }: { m: UseModels }): React.JSX.Element {
-  return (
-    <EndpointConnectForm
-      connect={m.localLlm}
-      resolver={zodResolver(localLlmConnectFormSchema)}
-      description="Connect to Ollama, LM Studio, or another OpenAI-compatible server running locally."
-      urlPlaceholder="http://localhost:11434"
-    />
-  );
-}
-
-function OpenaiSttConnect({ m }: { m: UseModels }): React.JSX.Element {
-  return (
-    <EndpointConnectForm
-      connect={m.openaiStt}
-      resolver={zodResolver(openaiSttConnectFormSchema)}
-      description="Point OpenAI transcription at a self-hosted or OpenAI-compatible server (vLLM, LiteLLM, LM Studio). Leave the URL empty to use OpenAI."
-      urlPlaceholder="https://example.com/v1"
-    />
-  );
-}
-
-/**
- * Shared connect form for OpenAI-compatible endpoints (local LLM, custom STT).
- * Drives a react-hook-form with inline validation from the shared schema; the
- * Test button persists the values then probes the endpoint via the hook.
- */
-function EndpointConnectForm({
-  connect,
-  resolver,
-  description,
-  urlPlaceholder,
-}: {
-  connect: EndpointConnectState;
-  resolver: Resolver<EndpointConnectFormValues>;
-  description: string;
-  urlPlaceholder: string;
-}): React.JSX.Element {
   const [showKey, setShowKey] = useState(false);
-  const {
-    control,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<EndpointConnectFormValues>({
-    resolver,
-    defaultValues: { url: connect.initialUrl, apiKey: connect.initialApiKey },
-    mode: "onBlur",
-  });
+  const { localLlm } = m;
 
   return (
     <div className="border-border border-b px-5 py-4">
       <p className="text-muted-foreground mb-4 text-[13px] leading-relaxed">
-        {description}
+        Connect to Ollama, LM Studio, or another OpenAI-compatible server
+        running locally.
       </p>
       <form
-        onSubmit={handleSubmit((values) => connect.test(values))}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void localLlm.test();
+        }}
         className="space-y-3"
       >
-        <Controller
-          control={control}
-          name="url"
-          render={({ field }) => (
-            <div className="flex items-center gap-2">
-              <Input
-                type="text"
-                name={field.name}
-                ref={field.ref}
-                value={field.value}
-                onChange={(e) => {
-                  field.onChange(e);
-                  connect.clearStatus();
-                }}
-                onBlur={field.onBlur}
-                placeholder={urlPlaceholder}
-                aria-invalid={errors.url ? true : undefined}
-                className="min-w-0 flex-1"
-              />
-              <Button
-                type="submit"
-                variant="secondary"
-                size="sm"
-                disabled={connect.testing}
-                className="shrink-0"
-              >
-                {connect.testing ? (
-                  <span className="flex items-center gap-1.5">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Testing…
-                  </span>
-                ) : (
-                  "Test"
-                )}
-              </Button>
-            </div>
-          )}
-        />
-        {errors.url && (
-          <p className="text-destructive text-[12px] leading-snug">
-            {errors.url.message}
-          </p>
-        )}
-        <Controller
-          control={control}
-          name="apiKey"
-          render={({ field }) => (
-            <InputGroup>
-              <InputGroupInput
-                type={showKey ? "text" : "password"}
-                name={field.name}
-                ref={field.ref}
-                value={field.value}
-                onChange={field.onChange}
-                onBlur={field.onBlur}
-                placeholder="API key (optional)"
-              />
-              <RevealToggle
-                revealed={showKey}
-                onToggle={() => setShowKey(!showKey)}
-                label="API key"
-              />
-            </InputGroup>
-          )}
-        />
-        {connect.connected === true && (
+        <div className="flex items-center gap-2">
+          <Input
+            type="text"
+            value={localLlm.url}
+            onChange={(e) => {
+              localLlm.setUrl(e.target.value);
+              localLlm.clearStatus();
+            }}
+            placeholder="http://localhost:11434"
+            className="min-w-0 flex-1"
+          />
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            disabled={localLlm.testing}
+            className="shrink-0"
+          >
+            {localLlm.testing ? (
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Testing…
+              </span>
+            ) : (
+              "Test"
+            )}
+          </Button>
+        </div>
+        <InputGroup>
+          <InputGroupInput
+            type={showKey ? "text" : "password"}
+            value={localLlm.apiKey}
+            onChange={(e) => localLlm.setApiKey(e.target.value)}
+            placeholder="API key (optional)"
+          />
+          <RevealToggle
+            revealed={showKey}
+            onToggle={() => setShowKey(!showKey)}
+            label="API key"
+          />
+        </InputGroup>
+        {localLlm.connected === true && (
           <p className="text-primary text-[12px]">
-            Connected · {connect.models.length}{" "}
-            {connect.models.length === 1 ? "model" : "models"} found
+            Connected · {localLlm.models.length}{" "}
+            {localLlm.models.length === 1 ? "model" : "models"} found
           </p>
         )}
-        {connect.connected === false && connect.error && (
+        {localLlm.connected === false && localLlm.error && (
           <p className="text-destructive text-[12px] leading-snug">
-            {connect.error}
+            {localLlm.error}
           </p>
         )}
       </form>

@@ -1,7 +1,6 @@
 import type { LanguageModel } from "ai";
 import { getDb } from "./db.js";
 import { getLlmProvider } from "./llm/registry.js";
-import { reconcileUnsupportedMlxVoiceDefault } from "./mlx-asr/reconcile.js";
 import { getApiKeyForProvider } from "./streaming-stt.js";
 
 const LOCAL_PROVIDERS = new Set(["local-llm"]);
@@ -32,7 +31,6 @@ interface DefaultModels {
 }
 
 export function getDefaultModels(): DefaultModels {
-  reconcileUnsupportedMlxVoiceDefault();
   const db = getDb();
   const voice = db
     .prepare(

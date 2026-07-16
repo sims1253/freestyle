@@ -7,7 +7,7 @@ import { countFixes } from "./fixes.js";
 // and would otherwise perturb test module-mock ordering.
 const DEFAULT_CLOUD_URL = "https://service.freestylevoice.com";
 
-const SCHEMA_VERSION = 21;
+const SCHEMA_VERSION = 22;
 
 // Legacy default format-rule patterns (used only by pre-v12 migrations below):
 // domain/phrase entries match as substrings of url+title+app; bare words match
@@ -662,6 +662,24 @@ function applyMigrations(db: DatabaseSync, currentVersion: number): void {
       db.exec(
         "CREATE INDEX IF NOT EXISTS idx_model_configs_type_default ON model_configs(type, is_default)",
       );
+    }
+  }
+
+  if (currentVersion < 22) {
+    // Starling is the sole STT engine. Remove obsolete voice selections and
+    // give existing installs a deterministic local default.
+    try {
+      db.exec(
+        "DELETE FROM model_configs WHERE type = 'voice' AND provider != 'local-starling'",
+      );
+      db.exec("UPDATE model_configs SET is_default = 0 WHERE type = 'voice'");
+      db.prepare(
+        `INSERT INTO model_configs (provider, model_id, model_name, type, is_default)
+         VALUES ('local-starling', 'local-starling/granite', 'Granite Speech 4.1 (2B)', 'voice', 1)
+         ON CONFLICT(provider, model_id, type) DO UPDATE SET is_default = 1`,
+      ).run();
+    } catch {
+      // A partial legacy migration may not have created model_configs yet.
     }
   }
 

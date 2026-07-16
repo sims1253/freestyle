@@ -14,9 +14,6 @@ import {
 } from "../lib/freestyle-cloud.js";
 import { saveProcessedHistory, saveRawHistory } from "../lib/history-store.js";
 import { getLanguagesSetting } from "../lib/language.js";
-import { MLX_ASR_PROVIDER_ID } from "../lib/mlx-asr/constants.js";
-import { getMlxModelStatus } from "../lib/mlx-asr/models.js";
-import { canRunMlxAsr, startMlxInBackground } from "../lib/mlx-asr/server.js";
 import {
   FreestyleEventType,
   PipelineStage,
@@ -43,7 +40,6 @@ import {
   canRunStarling,
   startStarlingInBackground,
 } from "../lib/starling/server.js";
-import { CloudAuthError } from "../lib/streaming/providers/freestyle-cloud.js";
 import { getProvider } from "../lib/streaming/registry.js";
 import { stripProviderPrefix } from "../lib/streaming/types.js";
 import { getApiKeyForProvider } from "../lib/streaming-stt.js";
@@ -51,24 +47,13 @@ import {
   buildAsrVocabularyBias,
   resolveAsrVocabularyBias,
 } from "../lib/vocabulary-bias.js";
-import { isServerBinaryAvailable } from "../lib/whisper/binary.js";
-import { WHISPER_PROVIDER_ID } from "../lib/whisper/constants.js";
-import { startInBackground } from "../lib/whisper/server.js";
 import { prewarmModelCostRegistry } from "./models.js";
 
 const log = createAppLogger("transcribe");
 
-function routeVoiceProviderCategory(
-  providerId: string,
-): "local" | "byok" | "freestyle_cloud" {
-  if (
-    providerId === "local-whisper" ||
-    providerId === "local-mlx" ||
-    providerId === STARLING_PROVIDER_ID
-  )
-    return "local";
-  if (providerId === FREESTYLE_CLOUD_PROVIDER_ID) return "freestyle_cloud";
-  return "byok";
+function routeVoiceProviderCategory(_providerId: string): "local" {
+  void _providerId;
+  return "local";
 }
 
 /**
@@ -464,11 +449,6 @@ const transcribeRoute = new Hono().post("/", async (c) => {
         `STT took ${Date.now() - t0}ms | rawText=${JSON.stringify(rawText).slice(0, 120)}`,
       );
     } catch (err) {
-      // Expired/invalid cloud session — ask the desktop app to re-authenticate.
-      if (err instanceof CloudAuthError) {
-        invalidateSession();
-        return c.json({ error: "cloud_auth_required" }, 401);
-      }
       log.error(
         `transcribe failed (${voiceProvider}/${voiceModel}): ${formatError(err)}`,
       );
@@ -676,23 +656,6 @@ export const transcribePreWarmRoute = new Hono().post("/pre-warm", (c) => {
     }
 
     const modelId = stripProviderPrefix(defaults.voice.model_id);
-
-    if (provider === WHISPER_PROVIDER_ID) {
-      if (!isServerBinaryAvailable()) {
-        return c.json({ ok: true, warming: null });
-      }
-      startInBackground(modelId);
-      return c.json({ ok: true, warming: "whisper" });
-    }
-
-    if (provider === MLX_ASR_PROVIDER_ID) {
-      if (!canRunMlxAsr()) return c.json({ ok: true, warming: null });
-      if (getMlxModelStatus(modelId)?.status !== "ready") {
-        return c.json({ ok: true, warming: null });
-      }
-      startMlxInBackground(modelId);
-      return c.json({ ok: true, warming: "mlx" });
-    }
 
     if (provider === STARLING_PROVIDER_ID) {
       if (!canRunStarling()) return c.json({ ok: true, warming: null });

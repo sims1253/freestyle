@@ -81,20 +81,9 @@ export interface MlxAsrStatus {
 export const FREESTYLE_CLOUD_PROVIDER_ID = "freestyle-cloud";
 export const FREESTYLE_CLOUD_MODEL_ID = "freestyle-cloud/stt";
 
-export const CLOUD_VOICE_PROVIDERS = [
-  FREESTYLE_CLOUD_PROVIDER_ID,
-  "openai",
-  "groq",
-  "deepgram",
-  "elevenlabs",
-  "soniox",
-];
+export const CLOUD_VOICE_PROVIDERS = ["local-starling"];
 
-export const VOICE_PROVIDERS = [
-  ...CLOUD_VOICE_PROVIDERS,
-  "local-whisper",
-  "local-mlx",
-];
+export const VOICE_PROVIDERS = [...CLOUD_VOICE_PROVIDERS];
 
 export const LLM_PROVIDERS = [
   FREESTYLE_CLOUD_PROVIDER_ID,
@@ -113,16 +102,12 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   anthropic: "Anthropic",
   google: "Google",
   groq: "Groq",
-  deepgram: "Deepgram",
-  elevenlabs: "ElevenLabs",
-  soniox: "Soniox",
   mistral: "Mistral",
   openrouter: "OpenRouter",
   vercel: "Vercel AI Gateway",
   "freestyle-cloud": "Freestyle Transcribe",
   "local-llm": "Local LLM",
-  "local-whisper": "Local Whisper",
-  "local-mlx": "Local MLX",
+  "local-starling": "Local Starling",
 };
 
 /** Where to create an API key, linked from the key-entry views. */

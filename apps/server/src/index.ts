@@ -16,11 +16,6 @@ import {
   startHistoryRetentionSweep,
   stopHistoryRetentionSweep,
 } from "./lib/history-store.js";
-import { reconcileUnsupportedMlxVoiceDefault } from "./lib/mlx-asr/reconcile.js";
-import {
-  activateManagedMlxRuntimeForAppVersion,
-  prefetchManagedMlxRuntimeForAppRelease,
-} from "./lib/mlx-asr/runtime.js";
 import { configureNetwork } from "./lib/network.js";
 import { pluginApiGuard } from "./lib/plugin-api-guard.js";
 import {
@@ -271,7 +266,6 @@ export async function startServer(
 }
 
 export { closeDb, writeSetting } from "./lib/db.js";
-export { stopMlxServer } from "./lib/mlx-asr/server.js";
 export { configureNetwork } from "./lib/network.js";
 export {
   disposeServerPlugins,
@@ -286,12 +280,6 @@ export {
 } from "./lib/plugins/installer.js";
 export { captureException, shutdownPosthog } from "./lib/posthog.js";
 export { stopStarlingServer } from "./lib/starling/server.js";
-export { stopServer as stopWhisperServer } from "./lib/whisper/server.js";
-export {
-  activateManagedMlxRuntimeForAppVersion,
-  prefetchManagedMlxRuntimeForAppRelease,
-  reconcileUnsupportedMlxVoiceDefault,
-};
 
 export type AppType = ReturnType<typeof createApp>;
 
