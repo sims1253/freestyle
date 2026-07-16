@@ -96,6 +96,7 @@ const SUPPORTED_LLM_PROVIDERS = new Set([
   "google",
   "groq",
   "mistral",
+  "zai",
 ]);
 
 // One fast-tier cleanup model per provider, surfaced by default; everything
@@ -110,6 +111,8 @@ const CURATED_LLM_IDS = new Set([
   "anthropic/claude-haiku-4-5",
   "google/gemini-2.5-flash",
   "mistral/mistral-small-latest",
+  "zai/glm-4.7",
+  "zai/glm-5.2",
 ]);
 
 const BUILTIN_LLM_MODELS: AvailableModel[] = [
@@ -130,6 +133,50 @@ const BUILTIN_LLM_MODELS: AvailableModel[] = [
     family: "mistral",
     type: "llm",
     curated: true,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.ai",
+    model_id: "glm-5.2",
+    model_name: "GLM-5.2",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.ai",
+    model_id: "glm-5-turbo",
+    model_name: "GLM-5-Turbo",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.ai",
+    model_id: "glm-4.7",
+    model_name: "GLM-4.7",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
+  },
+  {
+    provider_id: "zai",
+    provider_name: "Z.ai",
+    model_id: "glm-4.5-air",
+    model_name: "GLM-4.5-Air",
+    family: "glm",
+    type: "llm",
+    curated: true,
+    cost_input: 0,
+    cost_output: 0,
   },
 ];
 
@@ -190,6 +237,7 @@ export async function isCleanupModelSupported(
 ): Promise<boolean> {
   if (providerId === "local-llm") return true;
   if (providerId === FREESTYLE_CLOUD_PROVIDER_ID) return true;
+  if (providerId === "zai") return true;
 
   try {
     const registry = await fetchModelsFromRegistry();

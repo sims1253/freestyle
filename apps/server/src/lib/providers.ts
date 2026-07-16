@@ -10,6 +10,7 @@ const PROVIDER_PREFIXED_CHAT_MODELS = new Set([
   "google",
   "mistral",
   "local-llm",
+  "zai",
 ]);
 
 function getChatModelId(providerId: string, modelId: string): string {

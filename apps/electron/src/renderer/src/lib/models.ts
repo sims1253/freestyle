@@ -87,6 +87,7 @@ export const LLM_PROVIDERS = [
   "google",
   "groq",
   "mistral",
+  "zai",
   "local-llm",
 ];
 
@@ -96,6 +97,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   google: "Google",
   groq: "Groq",
   mistral: "Mistral",
+  zai: "Z.ai",
   openrouter: "OpenRouter",
   "freestyle-cloud": "Freestyle Transcribe",
   "local-llm": "Local LLM",
@@ -112,6 +114,7 @@ export const PROVIDER_KEY_URLS: Record<string, string> = {
   anthropic: "https://console.anthropic.com/settings/keys",
   google: "https://aistudio.google.com/apikey",
   mistral: "https://console.mistral.ai/api-keys",
+  zai: "https://z.ai/manage-apikey/apikey-list",
 };
 
 export function displayProviderName(
