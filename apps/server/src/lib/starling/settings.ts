@@ -21,6 +21,12 @@ export function getStarlingPythonPath(): string | undefined {
 export function getStarlingSourcePath(): string | undefined {
   return readSetting("starling_source_path")?.trim() || undefined;
 }
+export function getStarlingUseWsl(): boolean {
+  return readSetting("starling_use_wsl") === "true";
+}
+export function getStarlingWslDistro(): string | undefined {
+  return readSetting("starling_wsl_distro")?.trim() || undefined;
+}
 export function getStarlingHost(): string {
   return readSetting("starling_host")?.trim() || STARLING_DEFAULT_HOST;
 }

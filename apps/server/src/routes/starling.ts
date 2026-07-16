@@ -14,6 +14,7 @@ import {
   getStarlingRunningModelSlug,
   getStarlingServerBaseUrl,
   getStarlingStartError,
+  isStarlingServerExternal,
   isStarlingServerFailed,
   isStarlingServerRunning,
   probeStarlingHealth,
@@ -27,6 +28,8 @@ import {
   getStarlingProfile,
   getStarlingPythonPath,
   getStarlingSourcePath,
+  getStarlingUseWsl,
+  getStarlingWslDistro,
 } from "../lib/starling/settings.js";
 import { stripProviderPrefix } from "../lib/streaming/types.js";
 
@@ -41,11 +44,14 @@ const starling = new Hono()
       pythonPath: findStarlingPython(),
       configuredPythonPath: getStarlingPythonPath() ?? null,
       sourcePath: getStarlingSourcePath() ?? null,
+      useWsl: getStarlingUseWsl(),
+      wslDistro: getStarlingWslDistro() ?? null,
       host: getStarlingHost(),
       port: getStarlingPort(),
       profile: getStarlingProfile(),
       baseUrl: getStarlingServerBaseUrl(),
       serverRunning: isStarlingServerRunning(),
+      external: isStarlingServerExternal(),
       serverFailed: isStarlingServerFailed(),
       startError: getStarlingStartError(),
       runningModelSlug: getStarlingRunningModelSlug() ?? health?.model ?? null,

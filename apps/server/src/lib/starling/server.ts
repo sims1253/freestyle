@@ -19,6 +19,8 @@ import {
   getStarlingProfile,
   getStarlingPythonPath,
   getStarlingSourcePath,
+  getStarlingUseWsl,
+  getStarlingWslDistro,
 } from "./settings.js";
 
 const log = createAppLogger("starling");
@@ -38,6 +40,9 @@ let runningModelSlug: string | null = null;
 let lifecycle: Promise<void> = Promise.resolve();
 let unloadTimer: ReturnType<typeof setTimeout> | null = null;
 let recentStderr: string[] = [];
+let external = false;
+let processUsesWsl = false;
+let processWslDistro: string | undefined;
 
 export interface StarlingHealth {
   status?: string;
@@ -56,6 +61,13 @@ export interface StarlingTranscribeResult {
 
 export function findStarlingPython(): string | null {
   const configured = getStarlingPythonPath();
+  if (getStarlingUseWsl())
+    return (
+      configured ??
+      process.env.FREESTYLE_STARLING_PYTHON ??
+      process.env.PYTHON ??
+      null
+    );
   for (const candidate of [
     configured,
     process.env.FREESTYLE_STARLING_PYTHON,
@@ -74,7 +86,7 @@ export function describeStarlingSetupBlocker(): string | null {
   if (!findStarlingPython())
     return "Starling needs a Python executable. Set the Python path to an environment with starling installed.";
   const source = getStarlingSourcePath();
-  return source && !existsSync(source)
+  return source && !getStarlingUseWsl() && !existsSync(source)
     ? `Starling source path does not exist: ${source}`
     : null;
 }
@@ -82,7 +94,10 @@ export function canRunStarling(): boolean {
   return describeStarlingSetupBlocker() === null;
 }
 export function isStarlingServerRunning(): boolean {
-  return processHandle !== null && ready;
+  return (processHandle !== null || external) && ready;
+}
+export function isStarlingServerExternal(): boolean {
+  return external;
 }
 export function isStarlingServerFailed(): boolean {
   return failed;
@@ -187,10 +202,40 @@ export function ensureStarlingServerRunning(modelId: string): Promise<void> {
 }
 async function ensureLocked(modelId: string): Promise<void> {
   clearUnloadTimer();
-  if (ready && currentModelId === modelId) return;
-  await stopUnlocked();
+  if (ready && currentModelId === modelId && !external) return;
   const model = getStarlingModel(modelId);
   if (!model) throw new Error(`Unknown Starling model: ${modelId}`);
+
+  // An already-bound server may have been started outside Freestyle (notably
+  // inside WSL). Never stop a process we did not spawn.
+  const health = await fetchHealth(getStarlingBaseUrl());
+  if (health?.status === "ok") {
+    if (health.model === model.slug) {
+      const ownsProcess = processHandle !== null;
+      external = !ownsProcess;
+      if (!ownsProcess) {
+        processUsesWsl = false;
+        processWslDistro = undefined;
+      }
+      ready = true;
+      failed = false;
+      startError = null;
+      currentModelId = modelId;
+      runningModelSlug = health.model;
+      phase = health.phase ?? "ready";
+      queueDepth = health.queueDepth ?? null;
+      return;
+    }
+    if (!processHandle) {
+      throw new Error(
+        `Starling server is already running model "${health.model ?? "unknown"}", but Freestyle requested "${model.slug}". Stop or reconfigure the external server before switching models.`,
+      );
+    }
+  }
+  // An external process may have stopped since its last successful health
+  // check. It is now safe to clear our adoption state and spawn a replacement.
+  if (external) external = false;
+  await stopUnlocked();
   const python = findStarlingPython();
   if (!python)
     throw new Error(
@@ -200,7 +245,7 @@ async function ensureLocked(modelId: string): Promise<void> {
   failed = false;
   startError = null;
   currentModelId = modelId;
-  const args = [
+  const serverArgs = [
     "-m",
     STARLING_SERVER_MODULE,
     "--model",
@@ -218,12 +263,27 @@ async function ensureLocked(modelId: string): Promise<void> {
     // model, rather than making a healthy long load look like a dead process.
     "--no-eager-load",
   ];
-  const child = spawn(python, args, {
-    cwd: getStarlingSourcePath(),
+  const useWsl = getStarlingUseWsl();
+  const sourcePath = getStarlingSourcePath();
+  const wslDistro = getStarlingWslDistro();
+  const args = useWsl
+    ? [
+        ...(wslDistro ? ["-d", wslDistro] : []),
+        ...(sourcePath ? ["--cd", sourcePath] : []),
+        "-e",
+        python,
+        ...serverArgs,
+      ]
+    : serverArgs;
+  const child = spawn(useWsl ? "wsl.exe" : python, args, {
+    ...(useWsl ? {} : { cwd: sourcePath }),
     env: { ...process.env, PYTHONUNBUFFERED: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   processHandle = child;
+  processUsesWsl = useWsl;
+  processWslDistro = useWsl ? wslDistro : undefined;
+  external = false;
   ready = false;
   recentStderr = [];
   child.stdout?.on("data", (data: Buffer) =>
@@ -300,6 +360,8 @@ function fail(child: ChildProcess, message: string): void {
   phase = null;
   queueDepth = null;
   recentStderr = [];
+  processUsesWsl = false;
+  processWslDistro = undefined;
 }
 
 export function startStarlingInBackground(modelId: string): void {
@@ -316,6 +378,7 @@ function clearUnloadTimer(): void {
 }
 function scheduleUnload(): void {
   clearUnloadTimer();
+  if (external) return;
   if (!processHandle) return;
   const delay = getStarlingKeepAliveMinutes() * 60_000;
   if (!delay) {
@@ -332,8 +395,13 @@ export function stopStarlingServer(): Promise<void> {
 }
 async function stopUnlocked(): Promise<void> {
   clearUnloadTimer();
+  if (external) return;
   const child = processHandle;
+  const usesWsl = processUsesWsl;
+  const wslDistro = processWslDistro;
   processHandle = null;
+  processUsesWsl = false;
+  processWslDistro = undefined;
   ready = false;
   failed = false;
   startError = null;
@@ -355,6 +423,24 @@ async function stopUnlocked(): Promise<void> {
       resolve();
     }
   });
+  if (usesWsl) {
+    try {
+      const cleanup = spawn(
+        "wsl.exe",
+        [
+          ...(wslDistro ? ["-d", wslDistro] : []),
+          "-e",
+          "pkill",
+          "-f",
+          "starling.server",
+        ],
+        { stdio: "ignore" },
+      );
+      cleanup.unref();
+    } catch {
+      // Best effort: killing wsl.exe does not always end its Linux child.
+    }
+  }
 }
 
 export async function transcribeWithStarling(opts: {
