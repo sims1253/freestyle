@@ -20,6 +20,7 @@ import settings from "./settings.js";
 import starling from "./starling.js";
 import streamRoute from "./stream.js";
 import transcribe, { transcribePreWarmRoute } from "./transcribe.js";
+import transcribeFile from "./transcribe-file.js";
 import usage from "./usage.js";
 import vocabulary from "./vocabulary.js";
 
@@ -63,6 +64,7 @@ const apiRouter = new Hono()
   .route("/models", models)
   .route("/transcribe", transcribe)
   .route("/transcribe", transcribePreWarmRoute)
+  .route("/transcribe-file", transcribeFile)
   .route("/history", history)
   .route("/dictionary", dictionary)
   .route("/vocabulary", vocabulary)

@@ -50,6 +50,7 @@ import { type DateRange, DayPicker } from "react-day-picker";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { SETTINGS_KEYS } from "../../../shared/settings-keys";
+import { FileTranscription } from "./history/file-transcription";
 
 interface HistoryEntry {
   id: number;
@@ -443,7 +444,10 @@ export default function HistoryPage(): React.JSX.Element {
           } as React.CSSProperties
         }
       >
-        <PageHeader title={t("history.title")} />
+        <PageHeader
+          title={t("history.title")}
+          action={<FileTranscription onComplete={() => void invalidate()} />}
+        />
 
         {historyPaused && <HistoryPausedNotice />}
 
@@ -914,21 +918,26 @@ function ViewToggleRow({
 function PageHeader({
   title,
   subtitle,
+  action,
 }: {
   title: string;
   subtitle?: string;
+  action?: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div className="mb-7">
-      <h1 className="serif text-foreground m-0 text-[48px] font-normal leading-[0.95] tracking-[-0.025em]">
-        <span className="serif-italic text-primary">{title}</span>
-        <span>. </span>
-      </h1>
-      {subtitle && (
-        <p className="text-muted-foreground mt-2.5 max-w-[580px] text-[14px] leading-[1.5]">
-          {subtitle}
-        </p>
-      )}
+    <div className="mb-7 flex flex-wrap items-start justify-between gap-4">
+      <div>
+        <h1 className="serif text-foreground m-0 text-[48px] font-normal leading-[0.95] tracking-[-0.025em]">
+          <span className="serif-italic text-primary">{title}</span>
+          <span>. </span>
+        </h1>
+        {subtitle && (
+          <p className="text-muted-foreground mt-2.5 max-w-[580px] text-[14px] leading-[1.5]">
+            {subtitle}
+          </p>
+        )}
+      </div>
+      {action}
     </div>
   );
 }
