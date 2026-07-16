@@ -46,16 +46,11 @@ import { pathToFileURL } from "node:url";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import {
   type AppType,
-  activateManagedMlxRuntimeForAppVersion,
   captureException,
   closeDb,
   disposeServerPlugins,
-  prefetchManagedMlxRuntimeForAppRelease,
-  reconcileUnsupportedMlxVoiceDefault,
   shutdownPosthog,
   startServer as startFreestyleServer,
-  stopMlxServer,
-  stopWhisperServer,
   writeSetting,
 } from "@freestyle-voice/server";
 import { createAppLogger, enableFileLogging } from "@freestyle-voice/utils";
@@ -1243,9 +1238,6 @@ async function factoryReset(): Promise<void> {
   if (response !== 1) return;
 
   try {
-    await stopWhisperServer().catch(() => {});
-    await stopMlxServer().catch(() => {});
-
     if (keyListener) {
       keyListener.stop();
       keyListener = null;
@@ -1866,23 +1858,6 @@ app.whenReady().then(async () => {
   // Expose the app version to the in-process server so PostHog events
   // (including autocaptured exceptions) carry the release they came from.
   process.env.FREESTYLE_APP_VERSION = app.getVersion();
-  if (!is.dev) {
-    process.env.FREESTYLE_MLX_ASR_RELEASE_TAG ||= app.getVersion();
-  }
-
-  // Run non-critical server startup tasks now that the DB path is set. This is
-  // deferred off the boot critical path: reconcileUnsupportedMlxVoiceDefault can
-  // synchronously probe Python/MLX (execFileSync) on Apple Silicon without a
-  // managed runtime, which would otherwise block window creation. It is
-  // idempotent and also runs lazily via getDefaultModels() on first use, so
-  // deferring it by a tick is safe. Local ASR servers (whisper/mlx) are no
-  // longer pre-warmed at boot — they warm on recording start via the
-  // /api/transcribe/pre-warm endpoint, and start lazily at submission as a
-  // fallback.
-  setImmediate(() => {
-    reconcileUnsupportedMlxVoiceDefault();
-  });
-
   // Start the Hono HTTP server with WebSocket support (or reuse an existing one)
   const startServer = (port: number): void => {
     startFreestyleServer({ port, host: "127.0.0.1" })
@@ -1924,18 +1899,6 @@ app.whenReady().then(async () => {
     );
   } else {
     startServer(DEFAULT_PORT);
-  }
-
-  if (!is.dev) {
-    void activateManagedMlxRuntimeForAppVersion(app.getVersion()).catch(
-      (err) => {
-        log.warn(
-          `Failed to activate MLX runtime for app ${app.getVersion()}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      },
-    );
   }
 
   createTray();
@@ -2054,13 +2017,6 @@ app.whenReady().then(async () => {
         updateCheckTimer = null;
       }
       rebuildMenus();
-      void prefetchManagedMlxRuntimeForAppRelease(info.version).catch((err) => {
-        log.warn(
-          `Failed to stage MLX runtime for ${info.version}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      });
     });
 
     autoUpdater.on("error", (err) => {
@@ -2661,8 +2617,6 @@ function cleanupBeforeQuit(): void {
   void disposeServerPlugins().catch(() => {});
   audioPlaybackController.restoreSync();
   stopLinuxPasteHelper();
-  stopWhisperServer().catch(() => {});
-  stopMlxServer().catch(() => {});
   if (keyListener) {
     keyListener.stop();
     keyListener = null;

@@ -21,7 +21,6 @@ import {
   HISTORY_RETENTION_SETTING_KEY,
   purgeExpiredHistory,
 } from "../lib/history-store.js";
-import { applyMlxAsrRetentionPolicy } from "../lib/mlx-asr/server.js";
 import {
   CA_CERT_PATH_SETTING,
   configureNetwork,
@@ -29,7 +28,6 @@ import {
 } from "../lib/network.js";
 import { capture } from "../lib/posthog.js";
 import { applyStarlingRetentionPolicy } from "../lib/starling/server.js";
-import { applyWhisperRetentionPolicy } from "../lib/whisper/server.js";
 
 const settings = new Hono()
   .get("/", (c) => {
@@ -157,12 +155,6 @@ const settings = new Hono()
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
     ).run(key, String(body.value));
 
-    if (key === "mlx_asr_keep_alive_minutes") {
-      applyMlxAsrRetentionPolicy();
-    }
-    if (key === "whisper_keep_alive_minutes") {
-      applyWhisperRetentionPolicy();
-    }
     if (key === "starling_keep_alive_minutes") {
       applyStarlingRetentionPolicy();
     }

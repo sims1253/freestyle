@@ -1,11 +1,9 @@
 import { getClient } from "@renderer/lib/api";
 import type {
   AvailableModel,
-  MlxAsrStatus,
   VoiceItem,
   WhisperStatus,
 } from "@renderer/lib/models";
-import { IS_MAC } from "@renderer/lib/platform";
 import { SETTINGS_QUERY_KEY, settingsQueryOptions } from "@renderer/lib/query";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -35,15 +33,6 @@ const EMPTY_AVAILABLE: AvailableModel[] = [];
 const EMPTY_CONFIGURED: ConfiguredModel[] = [];
 const EMPTY_KEYS: ApiKeyEntry[] = [];
 
-/** True while any local model is downloading or verifying. */
-function hasActiveDownload(
-  models: { status: string }[] | undefined | null,
-): boolean {
-  return !!models?.some(
-    (m) => m.status === "downloading" || m.status === "verifying",
-  );
-}
-
 export interface LocalLlmState {
   url: string;
   setUrl: (v: string) => void;
@@ -63,7 +52,7 @@ export interface UseModels {
   configured: ConfiguredModel[];
   apiKeys: ApiKeyEntry[];
   whisperStatus: WhisperStatus | null;
-  mlxStatus: MlxAsrStatus | null;
+  mlxStatus: null;
   llmCleanup: boolean;
   /** True once the editable form state has been seeded from persisted settings. */
   settingsSeeded: boolean;
@@ -146,42 +135,15 @@ export function useModels(): UseModels {
 
   const whisperQuery = useQuery({
     queryKey: MODELS_KEYS.whisper,
-    queryFn: async () => {
-      const res = await getClient().api.whisper.status.$get();
-      if (!res.ok) throw new Error("Failed to load whisper status");
-      return (await res.json()) as WhisperStatus;
-    },
-    // Poll every 500ms while a download/verify is active, then stop.
-    refetchInterval: (query) => {
-      const d = query.state.data;
-      return d && (d.binaryDownloading || hasActiveDownload(d.models))
-        ? 500
-        : false;
-    },
-    // Status is volatile during downloads — always treat as stale.
-    staleTime: 0,
-  });
-
-  const mlxQuery = useQuery({
-    queryKey: MODELS_KEYS.mlx,
-    enabled: IS_MAC,
-    queryFn: async () => {
-      const res = await getClient().api["mlx-asr"].status.$get();
-      if (!res.ok) throw new Error("Failed to load MLX ASR status");
-      return (await res.json()) as MlxAsrStatus;
-    },
-    refetchInterval: (query) => {
-      const d = query.state.data;
-      return d && hasActiveDownload(d.models) ? 500 : false;
-    },
-    staleTime: 0,
+    enabled: false,
+    queryFn: async (): Promise<WhisperStatus | null> => null,
   });
 
   const available = availableQuery.data ?? EMPTY_AVAILABLE;
   const configured = configuredQuery.data ?? EMPTY_CONFIGURED;
   const apiKeys = keysQuery.data ?? EMPTY_KEYS;
   const whisperStatus = whisperQuery.data ?? null;
-  const mlxStatus = mlxQuery.data ?? null;
+  const mlxStatus = null;
   const loading =
     availableQuery.isLoading ||
     configuredQuery.isLoading ||
@@ -199,7 +161,7 @@ export function useModels(): UseModels {
 
   // In-flight deletes — drive spinners on the delete buttons since deletion has
   // no server-reported status the way downloads do.
-  const [deletingKeys, setDeletingKeys] = useState<Set<string>>(new Set());
+  const [deletingKeys] = useState<Set<string>>(new Set());
   const [deletingProviders, setDeletingProviders] = useState<Set<string>>(
     new Set(),
   );
@@ -241,15 +203,6 @@ export function useModels(): UseModels {
     }
   }, [settingsQuery.data, settingsSeeded]);
 
-  useEffect(() => {
-    const d = mlxQuery.data;
-    if (!d || seededRef.current.keepAlive) return;
-    seededRef.current.keepAlive = true;
-    if (Number.isFinite(d.keepAliveMinutes)) {
-      setMlxKeepAliveMinutes(clampMlxKeepAliveMinutes(d.keepAliveMinutes));
-    }
-  }, [mlxQuery.data]);
-
   // -------------------------------------------------------------------------
   // Reloaders (invalidate the relevant queries; polling is driven by
   // refetchInterval on the whisper/mlx queries above)
@@ -264,56 +217,8 @@ export function useModels(): UseModels {
   }, [queryClient]);
   const loadData = reload;
 
-  const loadWhisperStatus = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: MODELS_KEYS.whisper }),
-    [queryClient],
-  );
-
-  // MLX retry needs the fresh status synchronously, so this fetches directly
-  // and primes the query cache rather than just invalidating.
-  const loadMlxStatus = useCallback(
-    async (refresh = false): Promise<MlxAsrStatus | null> => {
-      try {
-        const res = refresh
-          ? await getClient().api["mlx-asr"].status.$get({
-              query: { refresh: "1" },
-            })
-          : await getClient().api["mlx-asr"].status.$get();
-        if (!res.ok) return null;
-        const data = (await res.json()) as MlxAsrStatus;
-        queryClient.setQueryData(MODELS_KEYS.mlx, data);
-        return data;
-      } catch (err) {
-        console.error("Failed to load MLX ASR status:", err);
-        return null;
-      }
-    },
-    [queryClient],
-  );
-
   // When an active download/verify transitions to done, refresh the model
   // lists (a freshly downloaded local model becomes selectable).
-  const whisperActive =
-    !!whisperStatus &&
-    (whisperStatus.binaryDownloading ||
-      hasActiveDownload(whisperStatus.models));
-  const prevWhisperActive = useRef(false);
-  useEffect(() => {
-    if (prevWhisperActive.current && !whisperActive) {
-      void queryClient.invalidateQueries({ queryKey: ["models"] });
-    }
-    prevWhisperActive.current = whisperActive;
-  }, [whisperActive, queryClient]);
-
-  const mlxActive = hasActiveDownload(mlxStatus?.models);
-  const prevMlxActive = useRef(false);
-  useEffect(() => {
-    if (prevMlxActive.current && !mlxActive) {
-      void queryClient.invalidateQueries({ queryKey: ["models"] });
-    }
-    prevMlxActive.current = mlxActive;
-  }, [mlxActive, queryClient]);
-
   // -------------------------------------------------------------------------
   // Derived state
   // -------------------------------------------------------------------------
@@ -340,7 +245,7 @@ export function useModels(): UseModels {
         defaultVoice,
         keyProviders,
       }),
-    [available, whisperStatus, mlxStatus, defaultVoice, keyProviders],
+    [available, whisperStatus, defaultVoice, keyProviders],
   );
 
   // -------------------------------------------------------------------------
@@ -393,7 +298,8 @@ export function useModels(): UseModels {
 
   const selectLocalVoice = useCallback(
     async (defId: string, name: string, engine?: "whisper" | "mlx") => {
-      const provider = engine === "mlx" ? "local-mlx" : "local-whisper";
+      void engine;
+      const provider = "local-starling";
       await getClient().api.models.configured.$post({
         json: {
           provider,
@@ -403,15 +309,9 @@ export function useModels(): UseModels {
           is_default: true,
         },
       });
-      if (engine === "mlx") {
-        getClient()
-          .api["mlx-asr"].server.start.$post({ json: { modelId: defId } })
-          .catch(() => {});
-      } else {
-        getClient()
-          .api.whisper.server.start.$post({ json: { modelId: defId } })
-          .catch(() => {});
-      }
+      getClient()
+        .api.starling.server.start.$post({ json: { modelId: defId } })
+        .catch(() => {});
       await loadData();
     },
     [loadData],
@@ -419,85 +319,31 @@ export function useModels(): UseModels {
 
   const downloadLocal = useCallback(
     (defId: string, engine?: "whisper" | "mlx") => {
-      if (engine === "mlx") {
-        void getClient()
-          .api["mlx-asr"].models[":model"].download.$post({
-            param: { model: defId },
-          })
-          .then(() => loadMlxStatus());
-      } else {
-        void getClient()
-          .api.whisper.models[":model"].download.$post({
-            param: { model: defId },
-          })
-          .then(() => loadWhisperStatus());
-      }
+      void defId;
+      void engine;
     },
-    [loadMlxStatus, loadWhisperStatus],
+    [],
   );
 
   const cancelLocal = useCallback(
     (defId: string, engine?: "whisper" | "mlx") => {
-      if (engine === "mlx") {
-        void getClient()
-          .api["mlx-asr"].models[":model"].cancel.$post({
-            param: { model: defId },
-          })
-          .then(() => loadMlxStatus());
-      } else {
-        void getClient()
-          .api.whisper.models[":model"].cancel.$post({
-            param: { model: defId },
-          })
-          .then(() => loadWhisperStatus());
-      }
+      void defId;
+      void engine;
     },
-    [loadMlxStatus, loadWhisperStatus],
+    [],
   );
 
   const deleteLocal = useCallback(
     async (defId: string, engine?: "whisper" | "mlx") => {
-      const deletingKey = `${engine ?? "whisper"}:${defId}`;
-      setDeletingKeys((prev) => new Set(prev).add(deletingKey));
-      try {
-        if (engine === "mlx") {
-          await getClient().api["mlx-asr"].models[":model"].$delete({
-            param: { model: defId },
-          });
-          await loadMlxStatus();
-        } else {
-          await getClient().api.whisper.models[":model"].$delete({
-            param: { model: defId },
-          });
-          await loadWhisperStatus();
-        }
-        await loadData();
-      } finally {
-        setDeletingKeys((prev) => {
-          const next = new Set(prev);
-          next.delete(deletingKey);
-          return next;
-        });
-      }
+      void defId;
+      void engine;
     },
-    [loadMlxStatus, loadWhisperStatus, loadData],
+    [],
   );
 
-  const retryLocalMlx = useCallback(
-    async (defId: string) => {
-      const data = await loadMlxStatus(true);
-      if (!data?.canRun) return;
-      const status = data.models?.find((m) => m.model === defId);
-      if (status?.status !== "ready") {
-        downloadLocal(defId, "mlx");
-        return;
-      }
-      const name =
-        data.modelDefinitions.find((m) => m.id === defId)?.displayName ?? defId;
-      await selectLocalVoice(defId, name, "mlx");
-    },
-    [loadMlxStatus, downloadLocal, selectLocalVoice],
-  );
+  const retryLocalMlx = useCallback(async (defId: string) => {
+    void defId;
+  }, []);
 
   const selectLocalLlmModel = useCallback(
     async (modelName: string) => {
@@ -534,10 +380,6 @@ export function useModels(): UseModels {
       .api.settings[":key"].$put({
         param: { key: SETTINGS_KEYS.mlxAsrKeepAliveMinutes },
         json: { value: String(next) },
-      })
-      .then(() => {
-        if (next !== 0) return;
-        return getClient().api["mlx-asr"].server.stop.$post();
       })
       .catch((err) => console.error("Failed to save MLX ASR keep-alive:", err));
   }, []);

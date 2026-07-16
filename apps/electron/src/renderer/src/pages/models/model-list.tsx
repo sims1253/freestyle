@@ -42,7 +42,6 @@ import {
   FREESTYLE_CLOUD_TIER,
   OpenModelSourceButton,
   recommendedVoiceKey,
-  TranscriptionPicker,
 } from "./transcription-picker";
 import type { ConfiguredModel } from "./types";
 import type { UseModels } from "./use-models";
@@ -210,7 +209,7 @@ export function ModelList({
   voiceView,
   llmView,
   m,
-  cloudBusy,
+  cloudBusy: _cloudBusy,
   onClose,
   onPickCloud,
   onPickLocalVoice,
@@ -247,7 +246,7 @@ export function ModelList({
       if (voiceView === "cloud") return "cloud";
       if (voiceView === "local") return "local";
       if (voiceView === "all") return "all";
-      return voiceView ?? "tiers";
+      return voiceView === "tiers" || !voiceView ? "all" : voiceView;
     }
     if (llmView === "cloud") return "cloud";
     if (llmView === "local") return "local";
@@ -255,19 +254,6 @@ export function ModelList({
     return llmView ?? "tiers";
   });
   const [showAllLlm, setShowAllLlm] = useState(false);
-
-  if (type === "voice" && view === "tiers") {
-    return (
-      <TranscriptionPicker
-        m={m}
-        busy={cloudBusy}
-        onClose={onClose}
-        onPickCloud={onPickCloud}
-        onBrowseLocal={() => setView("local")}
-        onBrowseCloud={() => setView("cloud")}
-      />
-    );
-  }
 
   if (type === "llm" && view === "tiers") {
     return (

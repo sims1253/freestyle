@@ -5,17 +5,7 @@ import { getDb } from "../lib/db.js";
 import {
   FREESTYLE_CLOUD_CLEANUP_MODEL_ID,
   FREESTYLE_CLOUD_PROVIDER_ID,
-  FREESTYLE_CLOUD_TRANSCRIBE_MODEL_ID,
 } from "../lib/freestyle-cloud.js";
-import {
-  LEGACY_MLX_ASR_MODELS,
-  MLX_ASR_MODELS,
-  MLX_ASR_PROVIDER_ID,
-  MLX_ASR_PROVIDER_NAME,
-} from "../lib/mlx-asr/constants.js";
-import { getMlxModelStatus } from "../lib/mlx-asr/models.js";
-import { reconcileUnsupportedMlxVoiceDefault } from "../lib/mlx-asr/reconcile.js";
-import { canRunMlxAsr } from "../lib/mlx-asr/server.js";
 import { capture } from "../lib/posthog.js";
 import {
   STARLING_MODELS,
@@ -23,12 +13,6 @@ import {
   STARLING_PROVIDER_NAME,
 } from "../lib/starling/constants.js";
 import { canRunStarling } from "../lib/starling/server.js";
-import {
-  LEGACY_WHISPER_MODELS,
-  WHISPER_MODELS,
-  WHISPER_PROVIDER_ID,
-} from "../lib/whisper/constants.js";
-import { getModelStatus } from "../lib/whisper/models.js";
 
 interface AvailableModel {
   provider_id: string;
@@ -91,37 +75,6 @@ async function fetchLocalLlmModels(): Promise<AvailableModel[]> {
   }));
 }
 
-// Local voice models (curated + legacy that's still downloaded — the
-// /available handler filters to ready models, so legacy entries only
-// surface for installs that already have them on disk).
-const LOCAL_WHISPER_VOICE_MODELS: AvailableModel[] = [
-  ...WHISPER_MODELS,
-  ...LEGACY_WHISPER_MODELS,
-].map((m) => ({
-  provider_id: WHISPER_PROVIDER_ID,
-  provider_name: "Local Whisper",
-  model_id: `${WHISPER_PROVIDER_ID}/${m.id}`,
-  model_name: m.displayName,
-  family: "whisper-local",
-  type: "voice" as const,
-  cost_input: 0,
-  cost_output: 0,
-}));
-
-const LOCAL_MLX_VOICE_MODELS: AvailableModel[] = [
-  ...MLX_ASR_MODELS,
-  ...LEGACY_MLX_ASR_MODELS,
-].map((m) => ({
-  provider_id: MLX_ASR_PROVIDER_ID,
-  provider_name: MLX_ASR_PROVIDER_NAME,
-  model_id: `${MLX_ASR_PROVIDER_ID}/${m.id}`,
-  model_name: m.displayName,
-  family: m.family,
-  type: "voice" as const,
-  cost_input: 0,
-  cost_output: 0,
-}));
-
 const LOCAL_STARLING_VOICE_MODELS: AvailableModel[] = STARLING_MODELS.map(
   (m) => ({
     provider_id: STARLING_PROVIDER_ID,
@@ -135,67 +88,6 @@ const LOCAL_STARLING_VOICE_MODELS: AvailableModel[] = STARLING_MODELS.map(
     curated: true,
   }),
 );
-
-// Curated cloud voice catalog: one flagship per provider. The models.dev
-// registry is deliberately NOT merged for voice — untested model noise.
-const BUILTIN_VOICE_MODELS: AvailableModel[] = [
-  {
-    provider_id: FREESTYLE_CLOUD_PROVIDER_ID,
-    provider_name: "Freestyle Transcribe",
-    model_id: FREESTYLE_CLOUD_TRANSCRIBE_MODEL_ID,
-    model_name: "Freestyle Transcribe",
-    family: "freestyle",
-    type: "voice",
-  },
-  {
-    provider_id: "openai",
-    provider_name: "OpenAI",
-    model_id: "openai/gpt-4o-transcribe",
-    model_name: "OpenAI Transcribe",
-    family: "whisper",
-    type: "voice",
-  },
-  {
-    provider_id: "groq",
-    provider_name: "Groq",
-    model_id: "groq/whisper-large-v3-turbo",
-    model_name: "Groq Whisper Turbo",
-    family: "whisper",
-    type: "voice",
-  },
-  {
-    provider_id: "groq",
-    provider_name: "Groq",
-    model_id: "groq/whisper-large-v3",
-    model_name: "Groq Whisper Large v3",
-    family: "whisper",
-    type: "voice",
-  },
-  {
-    provider_id: "deepgram",
-    provider_name: "Deepgram",
-    model_id: "deepgram/nova-3",
-    model_name: "Deepgram Nova 3",
-    family: "deepgram",
-    type: "voice",
-  },
-  {
-    provider_id: "elevenlabs",
-    provider_name: "ElevenLabs",
-    model_id: "elevenlabs/scribe_v2_realtime",
-    model_name: "ElevenLabs Scribe",
-    family: "elevenlabs",
-    type: "voice",
-  },
-  {
-    provider_id: "soniox",
-    provider_name: "Soniox",
-    model_id: "soniox/stt-rt-v4",
-    model_name: "Soniox Realtime v4",
-    family: "soniox",
-    type: "voice",
-  },
-];
 
 // Cleanup-LLM providers the app can actually run (see lib/providers.ts).
 const SUPPORTED_LLM_PROVIDERS = new Set([
@@ -398,32 +290,8 @@ const models = new Hono()
         if (!exists) available.push(model);
       }
 
-      // Curated cloud voice models
-      available.push(
-        ...BUILTIN_VOICE_MODELS.map((m) => ({ ...m, curated: true })),
-      );
-
-      // Add local whisper voice models (only those that are downloaded)
-      for (const whisperModel of LOCAL_WHISPER_VOICE_MODELS) {
-        const modelId = whisperModel.model_id.split("/")[1];
-        const status = getModelStatus(modelId);
-        if (status?.status === "ready") {
-          available.push({ ...whisperModel, curated: true });
-        }
-      }
-
-      if (canRunMlxAsr()) {
-        for (const mlxModel of LOCAL_MLX_VOICE_MODELS) {
-          const modelId = mlxModel.model_id.split("/")[1];
-          const status = getMlxModelStatus(modelId);
-          if (status?.status === "ready") {
-            available.push({ ...mlxModel, curated: true });
-          }
-        }
-      }
-
       // Starling manages its model weights in the configured Python environment;
-      // unlike whisper/MLX there is no separate download status to wait for.
+      // there is no separate download status to wait for.
       if (canRunStarling()) available.push(...LOCAL_STARLING_VOICE_MODELS);
 
       try {
@@ -443,7 +311,6 @@ const models = new Hono()
     }
   })
   .get("/configured", (c) => {
-    reconcileUnsupportedMlxVoiceDefault();
     const db = getDb();
     const rows = db
       .prepare(
