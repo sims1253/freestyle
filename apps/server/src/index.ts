@@ -10,6 +10,7 @@ import { timeout } from "hono/timeout";
 import { WebSocketServer } from "ws";
 import { authMiddleware, setAuthToken } from "./lib/auth.js";
 import { refreshCleanupPromptConfig } from "./lib/editor/prompt-config.js";
+import { cleanupOldAudioBackups } from "./lib/audio-backup.js";
 import { formatError } from "./lib/format-error.js";
 import { isTransientCloudError } from "./lib/freestyle-cloud.js";
 import {
@@ -238,6 +239,22 @@ export async function startServer(
   const app = createApp();
 
   startHistoryRetentionSweep();
+  // Audio backups are independent of history retention: retain them for the
+  // configured reprocessing window and sweep stale files every six hours.
+  try {
+    cleanupOldAudioBackups();
+  } catch (error) {
+    httpLog.warn(`Audio backup cleanup failed: ${String(error)}`);
+  }
+  const audioBackupSweep = setInterval(
+    () => {
+      try {
+        cleanupOldAudioBackups();
+      } catch {}
+    },
+    6 * 60 * 60_000,
+  );
+  audioBackupSweep.unref();
 
   // Retry any preference syncs that fail (offline / server down); rows persist
   // across restarts, so a change made offline eventually reaches the cloud.

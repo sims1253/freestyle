@@ -2,13 +2,18 @@ import { sanitizeTranscriptText } from "@freestyle-voice/stt";
 import { createAppLogger } from "@freestyle-voice/utils";
 import { upgradeWebSocket } from "@hono/node-server";
 import { Hono } from "hono";
+import { savePcm16AudioBackup } from "../lib/audio-backup.js";
 import { getRewritePromptContext } from "../lib/editor/rewrite-context.js";
 import {
   FREESTYLE_CLOUD_PROVIDER_ID,
   FreestyleCloudAuthError,
   FreestyleCloudUsageError,
 } from "../lib/freestyle-cloud.js";
-import { saveProcessedHistory, saveRawHistory } from "../lib/history-store.js";
+import {
+  getLastHistoryId,
+  saveProcessedHistory,
+  saveRawHistory,
+} from "../lib/history-store.js";
 import {
   getLanguagesSetting,
   getTranslateModeSetting,
@@ -65,6 +70,11 @@ const stream = new Hono().get(
     let audioDurationMs = 0;
     /** Audio received while the upstream socket is still connecting. */
     let pendingAudioChunks: ArrayBuffer[] = [];
+    let recordedAudioChunks: ArrayBuffer[] = [];
+    // Cap the in-memory backup buffer at ~30 min of PCM16@16kHz (~57 MB); a
+    // runaway session should not grow the server heap without bound.
+    const MAX_RECORDED_AUDIO_BYTES = 30 * 60 * 32_000;
+    let recordedAudioBytes = 0;
     let pendingChunksDropped = false;
     let pendingCommit = false;
     let reconnectAttempts = 0;
@@ -495,7 +505,7 @@ const stream = new Hono().get(
               if (!suppressed) {
                 const historyRawText = upstreamRaw || cloudText;
                 try {
-                  saveProcessedHistory({
+                  const historyId = saveProcessedHistory({
                     rawText: historyRawText,
                     cleanedText:
                       finalText !== historyRawText ? finalText : null,
@@ -509,6 +519,11 @@ const stream = new Hono().get(
                     outputTokens: 0,
                     costUsd: 0,
                   });
+                  if (historyId)
+                    savePcm16AudioBackup(
+                      getLastHistoryId(),
+                      recordedAudioChunks,
+                    );
                 } catch (err) {
                   log.error(`Failed to save history: ${err}`);
                 }
@@ -614,7 +629,7 @@ const stream = new Hono().get(
                 }
                 if (!suppressed) {
                   try {
-                    saveProcessedHistory({
+                    const historyId = saveProcessedHistory({
                       rawText,
                       cleanedText: pp.cleaned !== rawText ? pp.cleaned : null,
                       voiceProvider: voiceDefaults!.provider,
@@ -627,6 +642,11 @@ const stream = new Hono().get(
                       outputTokens: pp.outputTokens,
                       costUsd: pp.costUsd,
                     });
+                    if (historyId)
+                      savePcm16AudioBackup(
+                        getLastHistoryId(),
+                        recordedAudioChunks,
+                      );
                   } catch (err) {
                     log.error(`Failed to save history: ${err}`);
                   }
@@ -663,7 +683,7 @@ const stream = new Hono().get(
                   ws.send(JSON.stringify({ type: "final", text: rawText }));
                 }
                 try {
-                  saveRawHistory({
+                  const historyId = saveRawHistory({
                     rawText,
                     voiceProvider: voiceDefaults!.provider,
                     voiceModel: voiceDefaults!.model_id,
@@ -671,6 +691,11 @@ const stream = new Hono().get(
                       commitTime > 0 ? Date.now() - commitTime : durationMs,
                     audioDurationMs,
                   });
+                  if (historyId)
+                    savePcm16AudioBackup(
+                      getLastHistoryId(),
+                      recordedAudioChunks,
+                    );
                 } catch {}
               });
           },
@@ -760,6 +785,10 @@ const stream = new Hono().get(
                   data.byteOffset,
                   data.byteOffset + data.byteLength,
                 ) as ArrayBuffer);
+          if (recordedAudioBytes < MAX_RECORDED_AUDIO_BYTES) {
+            recordedAudioChunks.push(buf.slice(0));
+            recordedAudioBytes += buf.byteLength;
+          }
           if (
             !upstream ||
             (!upstream.waitUntilReady && notifiedReadyToken !== readyToken)
@@ -809,6 +838,8 @@ const stream = new Hono().get(
             commitTime = 0;
             appContext = msg.context ?? null;
             pendingAudioChunks = [];
+            recordedAudioChunks = [];
+            recordedAudioBytes = 0;
             pendingChunksDropped = false;
             pendingCommit = false;
             reconnectAttempts = 0;

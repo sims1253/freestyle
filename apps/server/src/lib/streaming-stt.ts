@@ -1,3 +1,4 @@
+import { getDb } from "./db.js";
 import { STARLING_PROVIDER_ID } from "./starling/constants.js";
 import { getProvider, supportsSessionTransport } from "./streaming/registry.js";
 import type {
@@ -75,5 +76,8 @@ export function openStreamingSession(opts: {
 export function getApiKeyForProvider(providerId: string): string | null {
   // On-device engines need no key.
   if (LOCAL_STT_PROVIDERS.has(providerId)) return "local";
-  return null;
+  const row = getDb()
+    .prepare("SELECT key FROM api_keys WHERE provider = ?")
+    .get(providerId) as { key: string } | undefined;
+  return row?.key ?? null;
 }

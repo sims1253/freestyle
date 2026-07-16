@@ -10,6 +10,8 @@ export function StarlingSettingsDialog({
   const [values, setValues] = useState<Record<string, string>>({
     starling_python_path: "",
     starling_source_path: "",
+    starling_use_wsl: "false",
+    starling_wsl_distro: "",
     starling_host: "127.0.0.1",
     starling_port: "8181",
     starling_profile: "realtime",
@@ -18,6 +20,7 @@ export function StarlingSettingsDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [external, setExternal] = useState(false);
   useEffect(() => {
     void fetch(`${getApiBase()}/api/settings`)
       .then((response) => response.json())
@@ -31,8 +34,11 @@ export function StarlingSettingsDialog({
         (status: {
           blockedReason?: string | null;
           startError?: string | null;
-        }) =>
-          setRuntimeError(status.blockedReason ?? status.startError ?? null),
+          external?: boolean;
+        }) => {
+          setRuntimeError(status.blockedReason ?? status.startError ?? null);
+          setExternal(status.external === true);
+        },
       )
       .catch(() => {});
   }, []);
@@ -74,6 +80,7 @@ export function StarlingSettingsDialog({
       />
     </label>
   );
+  const useWsl = values.starling_use_wsl === "true";
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <section
@@ -88,19 +95,40 @@ export function StarlingSettingsDialog({
         <h2 className="mt-2 text-lg font-semibold">Starling runtime</h2>
         <p className="text-muted-foreground mt-1 text-sm">
           Choose the Python environment where <code>starling</code> is
-          installed.
+          installed. In WSL mode, use Linux paths.
         </p>
         <div className="mt-5 grid gap-3">
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-muted-foreground">Run via WSL</span>
+            <input
+              type="checkbox"
+              checked={useWsl}
+              onChange={(event) =>
+                setValues((current) => ({
+                  ...current,
+                  starling_use_wsl: String(event.target.checked),
+                }))
+              }
+            />
+          </label>
           {input(
             "starling_python_path",
             "Python executable",
-            "C:\\venv\\Scripts\\python.exe",
+            useWsl
+              ? "/home/you/starling/.venv/bin/python"
+              : "C:\\venv\\Scripts\\python.exe",
           )}
           {input(
             "starling_source_path",
             "Source checkout (optional)",
-            "C:\\src\\starling",
+            useWsl ? "/home/you/starling" : "C:\\src\\starling",
           )}
+          {useWsl &&
+            input(
+              "starling_wsl_distro",
+              "WSL distro (optional)",
+              "Ubuntu-22.04",
+            )}
           {input("starling_host", "Host", "127.0.0.1")}
           {input("starling_port", "Port", "8181")}
           {input("starling_keep_alive_minutes", "Keep alive (minutes)", "10")}
@@ -127,6 +155,11 @@ export function StarlingSettingsDialog({
         {runtimeError && (
           <p className="border-destructive/30 bg-destructive/10 mt-4 rounded-md border px-3 py-2 text-sm text-destructive">
             {runtimeError}
+          </p>
+        )}
+        {external && (
+          <p className="border-border bg-muted mt-4 rounded-md border px-3 py-2 text-sm">
+            Using externally started server
           </p>
         )}
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}

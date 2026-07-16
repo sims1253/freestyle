@@ -1,6 +1,7 @@
 import { sanitizeTranscriptText } from "@freestyle-voice/stt";
 import { createAppLogger } from "@freestyle-voice/utils";
 import { Hono } from "hono";
+import { saveAudioBackup } from "../lib/audio-backup.js";
 import { readSetting } from "../lib/db.js";
 import { getRewritePromptContext } from "../lib/editor/rewrite-context.js";
 import { formatError } from "../lib/format-error.js";
@@ -12,7 +13,11 @@ import {
   prewarmFreestyleCloudConnection,
   transcribeWithFreestyleCloud,
 } from "../lib/freestyle-cloud.js";
-import { saveProcessedHistory, saveRawHistory } from "../lib/history-store.js";
+import {
+  getLastHistoryId,
+  saveProcessedHistory,
+  saveRawHistory,
+} from "../lib/history-store.js";
 import { getLanguagesSetting } from "../lib/language.js";
 import {
   FreestyleEventType,
@@ -492,13 +497,14 @@ const transcribeRoute = new Hono().post("/", async (c) => {
 
   if (skipPostProcess) {
     try {
-      saveRawHistory({
+      const historyId = saveRawHistory({
         rawText,
         voiceProvider,
         voiceModel,
         durationMs,
         audioDurationMs,
       });
+      if (historyId) saveAudioBackup(getLastHistoryId(), audioData);
     } catch (err) {
       log.error(`Failed to save history: ${err}`);
     }
@@ -540,7 +546,34 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     if (err instanceof FreestyleCloudUsageError) {
       return c.json({ error: "usage_exceeded", resetsAt: err.resetsAt }, 429);
     }
-    throw err;
+    log.error(
+      `post-process failed; delivering raw transcript: ${formatError(err)}`,
+    );
+    const totalDurationMs = Date.now() - start;
+    try {
+      const historyId = saveRawHistory({
+        rawText,
+        voiceProvider,
+        voiceModel,
+        durationMs: totalDurationMs,
+        audioDurationMs,
+      });
+      if (historyId) saveAudioBackup(getLastHistoryId(), audioData);
+    } catch (historyError) {
+      log.error(
+        `Failed to save raw history after cleanup failure: ${historyError}`,
+      );
+    }
+    return c.json({
+      raw: rawText,
+      cleaned: rawText,
+      model: voiceModel,
+      provider_category: routeVoiceProviderCategory(voiceProvider),
+      durationMs: totalDurationMs,
+      audioDurationMs,
+      cleanupFailed: true,
+      cleanupError: err instanceof Error ? err.message : String(err),
+    });
   }
   log.debug(
     `post-process took ${Date.now() - ppStart}ms | cleaned=${JSON.stringify(pp.cleaned).slice(0, 120)}`,
@@ -552,7 +585,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
   const totalDurationMs = Date.now() - start;
 
   try {
-    saveProcessedHistory({
+    const historyId = saveProcessedHistory({
       rawText,
       cleanedText: pp.cleaned !== rawText ? pp.cleaned : null,
       voiceProvider,
@@ -565,6 +598,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
       outputTokens: pp.outputTokens,
       costUsd: pp.costUsd,
     });
+    if (historyId) saveAudioBackup(getLastHistoryId(), audioData);
   } catch (err) {
     log.error(`Failed to save history: ${err}`);
   }
