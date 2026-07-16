@@ -17,6 +17,7 @@ export function StarlingSettingsDialog({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
   useEffect(() => {
     void fetch(`${getApiBase()}/api/settings`)
       .then((response) => response.json())
@@ -24,6 +25,16 @@ export function StarlingSettingsDialog({
         setValues((current) => ({ ...current, ...saved })),
       )
       .catch(() => setError("Could not load Starling settings."));
+    void fetch(`${getApiBase()}/api/starling/status`)
+      .then((response) => response.json())
+      .then(
+        (status: {
+          blockedReason?: string | null;
+          startError?: string | null;
+        }) =>
+          setRuntimeError(status.blockedReason ?? status.startError ?? null),
+      )
+      .catch(() => {});
   }, []);
   const save = async (): Promise<void> => {
     setSaving(true);
@@ -113,6 +124,11 @@ export function StarlingSettingsDialog({
             </select>
           </label>
         </div>
+        {runtimeError && (
+          <p className="border-destructive/30 bg-destructive/10 mt-4 rounded-md border px-3 py-2 text-sm text-destructive">
+            {runtimeError}
+          </p>
+        )}
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>

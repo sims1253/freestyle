@@ -22,8 +22,11 @@ import {
 } from "./settings.js";
 
 const log = createAppLogger("starling");
-const START_TIMEOUT_MS = 180_000;
+const HTTP_START_TIMEOUT_MS = 45_000;
+const MODEL_LOAD_TIMEOUT_MS = 30 * 60_000;
 const TRANSCRIBE_TIMEOUT_MS = 300_000;
+const LOAD_PING_INTERVAL_MS = 30_000;
+const STDERR_RING_SIZE = 20;
 let processHandle: ChildProcess | null = null;
 let currentModelId: string | null = null;
 let ready = false;
@@ -34,6 +37,7 @@ let queueDepth: number | null = null;
 let runningModelSlug: string | null = null;
 let lifecycle: Promise<void> = Promise.resolve();
 let unloadTimer: ReturnType<typeof setTimeout> | null = null;
+let recentStderr: string[] = [];
 
 export interface StarlingHealth {
   status?: string;
@@ -126,6 +130,56 @@ async function fetchHealth(url: string): Promise<StarlingHealth | null> {
   }
 }
 
+/**
+ * `--no-eager-load` binds the HTTP server before model weights are ready, but
+ * Starling only starts loading on a transcription request. A short silent WAV
+ * is enough to trigger that lazy path without adding an audio dependency.
+ */
+function createSilentLoadWav(): ArrayBuffer {
+  const sampleRate = 16_000;
+  const sampleCount = Math.round(sampleRate * 0.3);
+  const dataSize = sampleCount * 2;
+  const wav = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(wav);
+  writeWavString(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeWavString(view, 8, "WAVE");
+  writeWavString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeWavString(view, 36, "data");
+  view.setUint32(40, dataSize, true);
+  return wav;
+}
+
+function writeWavString(view: DataView, offset: number, value: string): void {
+  for (let index = 0; index < value.length; index++) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
+}
+
+async function triggerModelLoad(): Promise<void> {
+  try {
+    const response = await fetch(`${getStarlingBaseUrl()}/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "audio/wav" },
+      body: createSilentLoadWav(),
+    });
+    if (!response.ok) {
+      log.debug(`Starling load ping returned HTTP ${response.status}.`);
+    }
+  } catch (error) {
+    // A first-download request can time out at Starling's own deadline. Health
+    // polling remains authoritative and will schedule a later retry if needed.
+    log.debug(`Starling load ping ended: ${String(error)}`);
+  }
+}
+
 export function ensureStarlingServerRunning(modelId: string): Promise<void> {
   const run = lifecycle.then(() => ensureLocked(modelId));
   lifecycle = run.catch(() => undefined);
@@ -159,6 +213,10 @@ async function ensureLocked(modelId: string): Promise<void> {
     getStarlingProfile(),
     "--partial-interval-seconds",
     String(getStarlingPartialIntervalSeconds()),
+    // Bind HTTP before the model/weights finish loading. This keeps status and
+    // streaming clients responsive while transformers downloads a first-use
+    // model, rather than making a healthy long load look like a dead process.
+    "--no-eager-load",
   ];
   const child = spawn(python, args, {
     cwd: getStarlingSourcePath(),
@@ -167,25 +225,50 @@ async function ensureLocked(modelId: string): Promise<void> {
   });
   processHandle = child;
   ready = false;
+  recentStderr = [];
   child.stdout?.on("data", (data: Buffer) =>
     log.debug(data.toString().trimEnd()),
   );
-  child.stderr?.on("data", (data: Buffer) =>
-    log.warn(data.toString().trimEnd()),
-  );
+  child.stderr?.on("data", (data: Buffer) => {
+    const output = data.toString().trimEnd();
+    if (!output) return;
+    log.warn(output);
+    for (const line of output.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (trimmed) recentStderr.push(trimmed);
+    }
+    if (recentStderr.length > STDERR_RING_SIZE) {
+      recentStderr = recentStderr.slice(-STDERR_RING_SIZE);
+    }
+  });
   child.on("error", (error) => fail(child, error.message));
   child.on("close", (code) => {
     if (processHandle === child)
       fail(child, `Starling exited (code ${code ?? "unknown"}).`);
   });
-  const deadline = Date.now() + START_TIMEOUT_MS;
-  while (Date.now() < deadline) {
+  let httpAvailable = false;
+  let loadPing: Promise<void> | null = null;
+  let lastLoadPingAt = 0;
+  const httpDeadline = Date.now() + HTTP_START_TIMEOUT_MS;
+  const modelLoadDeadline = Date.now() + MODEL_LOAD_TIMEOUT_MS;
+  while (Date.now() < (httpAvailable ? modelLoadDeadline : httpDeadline)) {
     if (processHandle !== child)
       throw new Error(startError ?? "Starling server stopped during startup.");
     const health = await fetchHealth(getStarlingBaseUrl());
     if (health) {
+      httpAvailable = true;
       phase = health.phase ?? phase;
       queueDepth = health.queueDepth ?? queueDepth;
+      if (
+        !health.loaded &&
+        !loadPing &&
+        Date.now() - lastLoadPingAt >= LOAD_PING_INTERVAL_MS
+      ) {
+        lastLoadPingAt = Date.now();
+        loadPing = triggerModelLoad().finally(() => {
+          loadPing = null;
+        });
+      }
     }
     if (health?.status === "ok" && health.loaded) {
       ready = true;
@@ -196,19 +279,27 @@ async function ensureLocked(modelId: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   await stopUnlocked();
-  throw new Error("Starling server did not become ready within 180 seconds.");
+  throw new Error(
+    httpAvailable
+      ? "Starling model did not finish loading within 30 minutes."
+      : "Starling server did not expose HTTP within 45 seconds.",
+  );
 }
 function fail(child: ChildProcess, message: string): void {
   if (processHandle !== child) return;
-  log.error(message);
+  const stderr = recentStderr.at(-1);
+  const failureMessage =
+    stderr && !message.includes(stderr) ? `${message} ${stderr}` : message;
+  log.error(failureMessage);
   processHandle = null;
   ready = false;
   failed = true;
-  startError = message;
+  startError = failureMessage;
   currentModelId = null;
   runningModelSlug = null;
   phase = null;
   queueDepth = null;
+  recentStderr = [];
 }
 
 export function startStarlingInBackground(modelId: string): void {

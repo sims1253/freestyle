@@ -1151,7 +1151,7 @@ export default function SettingsPage(): React.JSX.Element {
               </div>
               <Row
                 label="Streaming audio"
-                desc="Stream audio in real-time for lower-latency dictation. Supported by Freestyle Transcribe, OpenAI, Deepgram, ElevenLabs, and Soniox."
+                desc="Stream audio in real-time for lower-latency dictation. Supported by Local Starling."
                 last
               >
                 <Switch
