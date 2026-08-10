@@ -13,6 +13,7 @@ const PROVIDER_PREFIXED_CHAT_MODELS = new Set([
   "vercel",
   "local-llm",
   "freestyle-cloud",
+  "zai",
 ]);
 
 function getChatModelId(providerId: string, modelId: string): string {

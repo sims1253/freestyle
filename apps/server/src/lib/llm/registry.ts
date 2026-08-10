@@ -157,6 +157,17 @@ const PROVIDERS: LlmProvider[] = [
     },
   },
   {
+    // Z.ai's coding-plan endpoint implements the OpenAI chat-completions API.
+    providerId: "zai",
+    createModel: async (modelId, apiKey) => {
+      const { createOpenAI } = await import("@ai-sdk/openai");
+      return createOpenAI({
+        apiKey,
+        baseURL: "https://api.z.ai/api/coding/paas/v4",
+      }).chat(modelId);
+    },
+  },
+  {
     providerId: "local-llm",
     local: true,
     createModel: async (modelId) => {
