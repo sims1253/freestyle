@@ -52,7 +52,11 @@ import { useCloudAuth } from "@renderer/lib/auth-context";
 import { formatNumber } from "@renderer/lib/format";
 import { requestMicAccess, resolveMicStatus } from "@renderer/lib/permissions";
 import { IS_LINUX, IS_MAC, IS_WINDOWS } from "@renderer/lib/platform";
-import { queryKeys, settingsQueryOptions } from "@renderer/lib/query";
+import {
+  type FreestyleConfig,
+  queryKeys,
+  settingsQueryOptions,
+} from "@renderer/lib/query";
 import { useCloudConfig } from "@renderer/lib/use-cloud-config";
 import {
   type CloudUsageBalance,
@@ -77,6 +81,7 @@ import {
   Sun,
   Trash2,
   Volume2,
+  FlaskConical,
   VolumeOff,
 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -124,6 +129,7 @@ const settingsSectionIds = [
   "data",
   "billing",
   "network",
+  "experimental",
 ] as const;
 
 type SettingsSectionId = (typeof settingsSectionIds)[number];
@@ -194,6 +200,8 @@ export default function SettingsPage(): React.JSX.Element {
     "never" | "7" | "30" | "custom"
   >("never");
   const [customRetentionDays, setCustomRetentionDays] = useState("90");
+  const [audioBackupRetentionDays, setAudioBackupRetentionDays] = useState("7");
+  const [streamingAudio, setStreamingAudio] = useState(false);
   const [audioPlaybackMode, setAudioPlaybackMode] =
     useState<AudioPlaybackMode>("off");
   const [autoUpdate, setAutoUpdate] = useState(true);
@@ -449,6 +457,8 @@ export default function SettingsPage(): React.JSX.Element {
         setCustomRetentionDays(String(retentionDays));
       }
     }
+    if (s.audio_backup_retention_days)
+      setAudioBackupRetentionDays(s.audio_backup_retention_days);
 
     // Audio playback mode with legacy fallback chain (new key → paused → duck).
     if (s.audio_playback_mode) {
@@ -705,6 +715,35 @@ export default function SettingsPage(): React.JSX.Element {
     [saveHistoryRetention],
   );
 
+    const saveAudioBackupRetention = useCallback((value: string) => {
+      const days = String(Math.max(1, Math.min(365, Number(value) || 7)));
+      setAudioBackupRetentionDays(days);
+      void getClient().api.settings[":key"].$put({
+        param: { key: "audio_backup_retention_days" },
+        json: { value: days },
+      });
+    }, []);
+
+    const handleStreamingAudioToggle = useCallback(
+      (enabled: boolean) => {
+        setStreamingAudio(enabled);
+        window.api?.sendStreamingAudioChanged(enabled);
+        getClient()
+          .api.config.flags[":key"].$put({
+            param: { key: "streaming_audio" },
+            json: { value: enabled },
+          })
+          .then(() => {
+            queryClient.setQueryData<FreestyleConfig>(queryKeys.config, (prev) =>
+              prev
+                ? { ...prev, flags: { ...prev.flags, streaming_audio: enabled } }
+                : prev,
+            );
+          })
+          .catch(() => {});
+      },
+      [queryClient],
+    );
   const handleAudioPlaybackModeChange = useCallback((value: string) => {
     const mode = normalizeAudioPlaybackMode(value);
     setAudioPlaybackMode(mode);
@@ -795,6 +834,25 @@ export default function SettingsPage(): React.JSX.Element {
                 desc={t("settings.interfaceLanguage.desc")}
               >
                 <LanguageSelector />
+              </Row>
+              <Row
+                label="Audio backup retention"
+                desc="Keep recorded WAV files for reprocessing, then remove them automatically."
+              >
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min="1"
+                    max="365"
+                    value={audioBackupRetentionDays}
+                    onChange={(event) =>
+                      saveAudioBackupRetention(event.target.value)
+                    }
+                    className="w-16 text-center"
+                    aria-label="Audio backup retention days"
+                  />
+                  <span className="text-muted-foreground text-xs">days</span>
+                </div>
               </Row>
               <Row
                 label={t("settings.application.autoUpdate")}
@@ -1309,6 +1367,28 @@ export default function SettingsPage(): React.JSX.Element {
           {activeSection === "billing" && <BillingPanel />}
 
           {activeSection === "network" && <NetworkPanel />}
+
+          {activeSection === "experimental" && (
+            <SettingsPanel>
+              <div className="border-border bg-secondary/40 text-muted-foreground mb-4 flex items-start gap-2.5 rounded-[10px] border px-3.5 py-3 text-[12px] leading-[1.55]">
+                <FlaskConical className="mt-px h-3.5 w-3.5 shrink-0 opacity-70" />
+                <span>
+                  These features are experimental and may change or be removed
+                  in future releases. Enable them to try new capabilities early.
+                </span>
+              </div>
+              <Row
+                label="Streaming audio"
+                desc="Stream audio in real-time for lower-latency dictation. Supported by Local Starling."
+                last
+              >
+                <Switch
+                  checked={streamingAudio}
+                  onCheckedChange={handleStreamingAudioToggle}
+                />
+              </Row>
+            </SettingsPanel>
+          )}
         </div>
       </div>
     </div>

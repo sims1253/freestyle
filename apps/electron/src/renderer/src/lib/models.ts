@@ -81,9 +81,10 @@ export interface MlxAsrStatus {
 export const FREESTYLE_CLOUD_PROVIDER_ID = "freestyle-cloud";
 export const FREESTYLE_CLOUD_MODEL_ID = "freestyle-cloud/stt";
 
-export const CLOUD_VOICE_PROVIDERS = ["local-starling"];
+/** Starling is an on-device engine; it never requires a provider API key. */
+export const LOCAL_VOICE_PROVIDERS = ["local-starling"];
 
-export const VOICE_PROVIDERS = [...CLOUD_VOICE_PROVIDERS];
+export const VOICE_PROVIDERS = [...LOCAL_VOICE_PROVIDERS];
 
 export const LLM_PROVIDERS = [
   FREESTYLE_CLOUD_PROVIDER_ID,
@@ -359,9 +360,11 @@ export function buildVoiceItems(
       streaming: meta?.streaming,
       note: meta?.note,
       hasKey:
-        m.provider_id === FREESTYLE_CLOUD_PROVIDER_ID
-          ? !!ctx.cloudSignedIn
-          : ctx.keyProviders.has(m.provider_id),
+        m.provider_id === "local-starling"
+          ? true
+          : m.provider_id === FREESTYLE_CLOUD_PROVIDER_ID
+            ? !!ctx.cloudSignedIn
+            : ctx.keyProviders.has(m.provider_id),
       available: m,
       selected:
         ctx.selectedProvider === m.provider_id &&
