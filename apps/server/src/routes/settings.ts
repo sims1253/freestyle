@@ -190,7 +190,10 @@ const settings = new Hono()
     if (SYNCED_SETTING_KEYS.has(key)) {
       pushSettingToCloud(key, String(body.value));
     }
-    if (key === "starling_keep_alive_minutes") {
+    if (
+      key === "starling_keep_alive_minutes" ||
+      key === "starling_keep_loaded"
+    ) {
       applyStarlingRetentionPolicy();
     }
     if (key === HISTORY_RETENTION_SETTING_KEY) {

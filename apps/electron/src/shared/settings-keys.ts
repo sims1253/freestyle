@@ -32,6 +32,7 @@ export const SETTINGS_KEYS = {
   soundEnabled: "sound_enabled",
   starlingHost: "starling_host",
   starlingKeepAliveMinutes: "starling_keep_alive_minutes",
+  starlingKeepLoaded: "starling_keep_loaded",
   starlingPort: "starling_port",
   starlingProfile: "starling_profile",
   starlingPythonPath: "starling_python_path",

@@ -78,6 +78,20 @@ export interface MlxAsrStatus {
   setupHint: string | null;
 }
 
+export interface StarlingModelDownloadState {
+  downloaded: boolean;
+  downloading: boolean;
+  progress: number;
+  error: string | null;
+}
+
+export interface StarlingStatus {
+  canRun: boolean;
+  blockedReason: string | null;
+  startError: string | null;
+  modelDownloads: Record<string, StarlingModelDownloadState>;
+}
+
 export const FREESTYLE_CLOUD_PROVIDER_ID = "freestyle-cloud";
 export const FREESTYLE_CLOUD_MODEL_ID = "freestyle-cloud/stt";
 

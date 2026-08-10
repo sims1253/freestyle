@@ -16,6 +16,7 @@ export function StarlingSettingsDialog({
     starling_port: "8181",
     starling_profile: "realtime",
     starling_keep_alive_minutes: "10",
+    starling_keep_loaded: "true",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +82,7 @@ export function StarlingSettingsDialog({
     </label>
   );
   const useWsl = values.starling_use_wsl === "true";
+  const keepLoaded = values.starling_keep_loaded !== "false";
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <section
@@ -131,7 +133,28 @@ export function StarlingSettingsDialog({
             )}
           {input("starling_host", "Host", "127.0.0.1")}
           {input("starling_port", "Port", "8181")}
-          {input("starling_keep_alive_minutes", "Keep alive (minutes)", "10")}
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span>
+              <span className="text-muted-foreground block">
+                Keep model loaded in VRAM
+              </span>
+              <span className="text-muted-foreground/75 block text-xs">
+                Avoids cold starts between dictations.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              checked={keepLoaded}
+              onChange={(event) =>
+                setValues((current) => ({
+                  ...current,
+                  starling_keep_loaded: String(event.target.checked),
+                }))
+              }
+            />
+          </label>
+          {!keepLoaded &&
+            input("starling_keep_alive_minutes", "Keep alive (minutes)", "10")}
           <label className="grid gap-1.5 text-sm">
             <span className="text-muted-foreground">Serving profile</span>
             <select

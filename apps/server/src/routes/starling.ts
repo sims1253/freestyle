@@ -6,6 +6,10 @@ import {
   STARLING_PROVIDER_NAME,
 } from "../lib/starling/constants.js";
 import {
+  getStarlingModelDownloadStates,
+  startStarlingModelDownload,
+} from "../lib/starling/downloads.js";
+import {
   canRunStarling,
   describeStarlingSetupBlocker,
   findStarlingPython,
@@ -24,6 +28,7 @@ import {
 import {
   getStarlingHost,
   getStarlingKeepAliveMinutes,
+  getStarlingKeepLoaded,
   getStarlingPort,
   getStarlingProfile,
   getStarlingPythonPath,
@@ -58,7 +63,9 @@ const starling = new Hono()
       phase: health?.phase ?? getStarlingPhase(),
       queueDepth: health?.queueDepth ?? getStarlingQueueDepth(),
       keepAliveMinutes: getStarlingKeepAliveMinutes(),
+      keepLoaded: getStarlingKeepLoaded(),
       modelDefinitions: STARLING_MODELS,
+      modelDownloads: await getStarlingModelDownloadStates(),
     });
   })
   .post("/server/start", async (c) => {
@@ -78,6 +85,11 @@ const starling = new Hono()
   })
   .post("/server/stop", async (c) => {
     await stopStarlingServer();
+    return c.json({ ok: true });
+  })
+  .post("/models/:id/download", (c) => {
+    const result = startStarlingModelDownload(c.req.param("id"));
+    if (!result.ok) return c.json({ error: result.error }, result.status);
     return c.json({ ok: true });
   });
 

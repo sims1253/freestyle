@@ -17,6 +17,8 @@ export interface StarlingModelDef {
   speed: string;
   quality: string;
   vramRequired: string;
+  /** Hugging Face repository Starling loads for this model. */
+  hfRepoId: string;
 }
 
 export const STARLING_MODELS: StarlingModelDef[] = [
@@ -28,6 +30,7 @@ export const STARLING_MODELS: StarlingModelDef[] = [
     speed: "Medium",
     quality: "High",
     vramRequired: "~10 GB",
+    hfRepoId: "ibm-granite/granite-speech-4.1-2b",
   },
   {
     id: "parakeet",
@@ -37,6 +40,7 @@ export const STARLING_MODELS: StarlingModelDef[] = [
     speed: "Fastest",
     quality: "High",
     vramRequired: "~2 GB",
+    hfRepoId: "nvidia/parakeet-tdt-0.6b-v3",
   },
   {
     id: "parakeet_unified",
@@ -46,6 +50,7 @@ export const STARLING_MODELS: StarlingModelDef[] = [
     speed: "Fast",
     quality: "High",
     vramRequired: "~3 GB",
+    hfRepoId: "nvidia/parakeet-unified-en-0.6b",
   },
   {
     id: "moss",
@@ -55,6 +60,7 @@ export const STARLING_MODELS: StarlingModelDef[] = [
     speed: "Medium",
     quality: "High",
     vramRequired: "~9 GB",
+    hfRepoId: "OpenMOSS-Team/MOSS-Transcribe-preview-2B",
   },
   {
     id: "qwen3",
@@ -64,6 +70,7 @@ export const STARLING_MODELS: StarlingModelDef[] = [
     speed: "Fast",
     quality: "Best",
     vramRequired: "~7 GB",
+    hfRepoId: "Qwen/Qwen3-ASR-1.7B-hf",
   },
   {
     id: "ark",
@@ -73,6 +80,7 @@ export const STARLING_MODELS: StarlingModelDef[] = [
     speed: "Fast",
     quality: "High",
     vramRequired: "~4 GB",
+    hfRepoId: "AutoArk-AI/ARK-ASR-3B",
   },
   {
     id: "cohere",
@@ -82,6 +90,7 @@ export const STARLING_MODELS: StarlingModelDef[] = [
     speed: "Medium",
     quality: "High",
     vramRequired: "~8 GB",
+    hfRepoId: "CohereLabs/cohere-transcribe-03-2026",
   },
   {
     id: "higgs",
@@ -91,6 +100,7 @@ export const STARLING_MODELS: StarlingModelDef[] = [
     speed: "Medium",
     quality: "High",
     vramRequired: "~8 GB",
+    hfRepoId: "bosonai/higgs-audio-v3-stt",
   },
   {
     id: "audex",
@@ -100,6 +110,7 @@ export const STARLING_MODELS: StarlingModelDef[] = [
     speed: "Fast",
     quality: "High",
     vramRequired: "~5 GB",
+    hfRepoId: "nvidia/Nemotron-Labs-Audex-2B",
   },
 ];
 
@@ -112,6 +123,7 @@ export const LEGACY_STARLING_MODELS: StarlingModelDef[] = [
     speed: "Medium",
     quality: "High",
     vramRequired: "~10 GB",
+    hfRepoId: "ibm-granite/granite-speech-4.1-2b",
   },
 ];
 
