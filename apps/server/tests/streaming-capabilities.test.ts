@@ -6,11 +6,11 @@ import {
 
 describe("streaming capabilities", () => {
   it("exposes Starling as the only streaming voice transport", () => {
-    expect(supportsStreaming("local-starling", "local-starling/granite")).toBe(
+    expect(supportsStreaming("local-starling", "local-starling/parakeet")).toBe(
       true,
     );
     expect(
-      supportsSessionTransport("local-starling", "local-starling/granite"),
+      supportsSessionTransport("local-starling", "local-starling/parakeet"),
     ).toBe(true);
     expect(supportsStreaming("deepgram", "deepgram/nova-3")).toBe(false);
   });

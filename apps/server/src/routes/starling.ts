@@ -4,15 +4,17 @@ import {
   STARLING_MODELS,
   STARLING_PROVIDER_ID,
   STARLING_PROVIDER_NAME,
+  STARLING_SERVE_VERSION,
 } from "../lib/starling/constants.js";
 import {
+  getStarlingBinaryState,
   getStarlingModelDownloadStates,
+  startBinaryDownload,
   startStarlingModelDownload,
 } from "../lib/starling/downloads.js";
 import {
   canRunStarling,
   describeStarlingSetupBlocker,
-  findStarlingPython,
   getStarlingPhase,
   getStarlingQueueDepth,
   getStarlingRunningModelSlug,
@@ -26,15 +28,13 @@ import {
   stopStarlingServer,
 } from "../lib/starling/server.js";
 import {
+  getStarlingBinaryPath,
+  getStarlingGgufDir,
   getStarlingHost,
   getStarlingKeepAliveMinutes,
   getStarlingKeepLoaded,
   getStarlingPort,
-  getStarlingProfile,
-  getStarlingPythonPath,
-  getStarlingSourcePath,
-  getStarlingUseWsl,
-  getStarlingWslDistro,
+  getStarlingQuant,
 } from "../lib/starling/settings.js";
 import { stripProviderPrefix } from "../lib/streaming/types.js";
 
@@ -46,14 +46,12 @@ const starling = new Hono()
       providerName: STARLING_PROVIDER_NAME,
       canRun: canRunStarling(),
       blockedReason: describeStarlingSetupBlocker(),
-      pythonPath: findStarlingPython(),
-      configuredPythonPath: getStarlingPythonPath() ?? null,
-      sourcePath: getStarlingSourcePath() ?? null,
-      useWsl: getStarlingUseWsl(),
-      wslDistro: getStarlingWslDistro() ?? null,
+      binaryPath: getStarlingBinaryPath() ?? null,
+      ggufDir: getStarlingGgufDir() ?? null,
+      quant: getStarlingQuant(),
+      serveVersion: STARLING_SERVE_VERSION,
       host: getStarlingHost(),
       port: getStarlingPort(),
-      profile: getStarlingProfile(),
       baseUrl: getStarlingServerBaseUrl(),
       serverRunning: isStarlingServerRunning(),
       external: isStarlingServerExternal(),
@@ -66,6 +64,7 @@ const starling = new Hono()
       keepLoaded: getStarlingKeepLoaded(),
       modelDefinitions: STARLING_MODELS,
       modelDownloads: await getStarlingModelDownloadStates(),
+      binaryState: await getStarlingBinaryState(),
     });
   })
   .post("/server/start", async (c) => {
@@ -90,6 +89,10 @@ const starling = new Hono()
   .post("/models/:id/download", (c) => {
     const result = startStarlingModelDownload(c.req.param("id"));
     if (!result.ok) return c.json({ error: result.error }, result.status);
+    return c.json({ ok: true });
+  })
+  .post("/binary/download", async (c) => {
+    await startBinaryDownload();
     return c.json({ ok: true });
   });
 

@@ -34,9 +34,9 @@ export const SETTINGS_KEYS = {
   starlingKeepAliveMinutes: "starling_keep_alive_minutes",
   starlingKeepLoaded: "starling_keep_loaded",
   starlingPort: "starling_port",
-  starlingProfile: "starling_profile",
-  starlingPythonPath: "starling_python_path",
-  starlingSourcePath: "starling_source_path",
+  starlingBinaryPath: "starling_binary_path",
+  starlingGgufDir: "starling_gguf_dir",
+  starlingQuant: "starling_quant",
   theme: "theme",
   translateMode: "translate_mode",
 } as const;

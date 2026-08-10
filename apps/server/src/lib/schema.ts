@@ -675,7 +675,7 @@ function applyMigrations(db: DatabaseSync, currentVersion: number): void {
       db.exec("UPDATE model_configs SET is_default = 0 WHERE type = 'voice'");
       db.prepare(
         `INSERT INTO model_configs (provider, model_id, model_name, type, is_default)
-         VALUES ('local-starling', 'local-starling/granite', 'Granite Speech 4.1 (2B)', 'voice', 1)
+         VALUES ('local-starling', 'local-starling/parakeet', 'Parakeet TDT 0.6B v3', 'voice', 1)
          ON CONFLICT(provider, model_id, type) DO UPDATE SET is_default = 1`,
       ).run();
     } catch {

@@ -8,13 +8,11 @@ export function StarlingSettingsDialog({
   onClose: () => void;
 }): React.JSX.Element {
   const [values, setValues] = useState<Record<string, string>>({
-    starling_python_path: "",
-    starling_source_path: "",
-    starling_use_wsl: "false",
-    starling_wsl_distro: "",
+    starling_binary_path: "",
+    starling_gguf_dir: "",
+    starling_quant: "q8_0",
     starling_host: "127.0.0.1",
     starling_port: "8181",
-    starling_profile: "realtime",
     starling_keep_alive_minutes: "10",
     starling_keep_loaded: "true",
   });
@@ -81,7 +79,6 @@ export function StarlingSettingsDialog({
       />
     </label>
   );
-  const useWsl = values.starling_use_wsl === "true";
   const keepLoaded = values.starling_keep_loaded !== "false";
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -96,41 +93,36 @@ export function StarlingSettingsDialog({
         </p>
         <h2 className="mt-2 text-lg font-semibold">Starling runtime</h2>
         <p className="text-muted-foreground mt-1 text-sm">
-          Choose the Python environment where <code>starling</code> is
-          installed. In WSL mode, use Linux paths.
+          Configure the native <code>starling-serve</code> binary and model
+          files. Leave paths empty for automatic management.
         </p>
         <div className="mt-5 grid gap-3">
-          <label className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-muted-foreground">Run via WSL</span>
-            <input
-              type="checkbox"
-              checked={useWsl}
+          {input(
+            "starling_binary_path",
+            "starling-serve binary (optional)",
+            "Auto-managed",
+          )}
+          {input(
+            "starling_gguf_dir",
+            "GGUF model directory (optional)",
+            "Auto-managed",
+          )}
+          <label className="grid gap-1.5 text-sm">
+            <span className="text-muted-foreground">Quantization</span>
+            <select
+              value={values.starling_quant ?? "q8_0"}
               onChange={(event) =>
                 setValues((current) => ({
                   ...current,
-                  starling_use_wsl: String(event.target.checked),
+                  starling_quant: event.target.value,
                 }))
               }
-            />
+              className="border-border bg-background rounded-md border px-3 py-2"
+            >
+              <option value="q8_0">q8_0 (smaller, recommended)</option>
+              <option value="bf16-exact">bf16-exact (highest accuracy)</option>
+            </select>
           </label>
-          {input(
-            "starling_python_path",
-            "Python executable",
-            useWsl
-              ? "/home/you/starling/.venv/bin/python"
-              : "C:\\venv\\Scripts\\python.exe",
-          )}
-          {input(
-            "starling_source_path",
-            "Source checkout (optional)",
-            useWsl ? "/home/you/starling" : "C:\\src\\starling",
-          )}
-          {useWsl &&
-            input(
-              "starling_wsl_distro",
-              "WSL distro (optional)",
-              "Ubuntu-22.04",
-            )}
           {input("starling_host", "Host", "127.0.0.1")}
           {input("starling_port", "Port", "8181")}
           <label className="flex items-center justify-between gap-3 text-sm">
@@ -155,25 +147,6 @@ export function StarlingSettingsDialog({
           </label>
           {!keepLoaded &&
             input("starling_keep_alive_minutes", "Keep alive (minutes)", "10")}
-          <label className="grid gap-1.5 text-sm">
-            <span className="text-muted-foreground">Serving profile</span>
-            <select
-              value={values.starling_profile ?? "realtime"}
-              onChange={(event) =>
-                setValues((current) => ({
-                  ...current,
-                  starling_profile: event.target.value,
-                }))
-              }
-              className="border-border bg-background rounded-md border px-3 py-2"
-            >
-              {["realtime", "file", "batch", "accuracy"].map((profile) => (
-                <option key={profile} value={profile}>
-                  {profile}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
         {runtimeError && (
           <p className="border-destructive/30 bg-destructive/10 mt-4 rounded-md border px-3 py-2 text-sm text-destructive">

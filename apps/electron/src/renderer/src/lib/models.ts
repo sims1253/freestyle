@@ -85,11 +85,20 @@ export interface StarlingModelDownloadState {
   error: string | null;
 }
 
+export interface StarlingBinaryState {
+  downloaded: boolean;
+  downloading: boolean;
+  progress: number;
+  error: string | null;
+  version: string | null;
+}
+
 export interface StarlingStatus {
   canRun: boolean;
   blockedReason: string | null;
   startError: string | null;
   modelDownloads: Record<string, StarlingModelDownloadState>;
+  binaryState: StarlingBinaryState;
 }
 
 export const FREESTYLE_CLOUD_PROVIDER_ID = "freestyle-cloud";
